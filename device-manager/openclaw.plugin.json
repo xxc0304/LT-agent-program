@@ -1,0 +1,21 @@
+{
+  "id": "device-manager",
+  "name": "家庭设备管家",
+  "description": "为家庭微脑提供 Mock Home Assistant 设备发现、状态查询和安全控制工具。",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "contracts": {
+    "tools": [
+      "list_devices",
+      "get_state",
+      "control_device"
+    ]
+  }
+}

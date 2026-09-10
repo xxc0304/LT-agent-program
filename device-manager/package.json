@@ -1,0 +1,34 @@
+{
+  "name": "lt-device-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "家庭微脑设备管家 Agent 的 Mock Home Assistant 与基础设备工具",
+  "scripts": {
+    "demo": "node src/demo.js",
+    "test": "node --test",
+    "plugin:validate": "openclaw plugins validate --root . --entry ./src/openclaw-plugin.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.5.17"
+  },
+  "dependencies": {
+    "typebox": "^1.1.38"
+  },
+  "openclaw": {
+    "extensions": [
+      "./src/openclaw-plugin.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.17",
+      "minGatewayVersion": ">=2026.5.17"
+    },
+    "build": {
+      "openclawVersion": "2026.9.3",
+      "pluginSdkVersion": "2026.9.3"
+    }
+  }
+}

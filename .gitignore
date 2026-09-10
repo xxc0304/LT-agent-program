@@ -1,0 +1,16 @@
+# Local runtime output
+*.log
+
+# Dependencies
+**/node_modules/
+
+# Local-only analysis retained on this device
+extracted/OpenClaw代码结构分析报告.md
+
+# Local environment and credentials
+.env
+.env.*
+*.pem
+*.key
+credentials.json
+
