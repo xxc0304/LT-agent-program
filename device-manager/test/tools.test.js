@@ -5,14 +5,14 @@ import test from "node:test";
 import { MockHomeAssistant } from "../src/mock-ha.js";
 import { createDeviceToolRuntime, DEVICE_TOOL_DEFINITIONS } from "../src/tools.js";
 
-test("暴露三个基础设备工具", () => {
+test("暴露五个基础设备工具", () => {
   assert.deepEqual(
     DEVICE_TOOL_DEFINITIONS.map((tool) => tool.name),
-    ["list_devices", "get_state", "control_device"],
+    ["list_devices", "get_state", "control_device", "run_scene", "diagnose_device"],
   );
 });
 
-test("OpenClaw manifest 声明相同的三个工具", () => {
+test("OpenClaw manifest 声明相同的五个工具", () => {
   const manifestUrl = new URL("../openclaw.plugin.json", import.meta.url);
   const manifest = JSON.parse(readFileSync(manifestUrl, "utf8"));
 
@@ -135,6 +135,110 @@ test("成功控制会写入可审计记录，失败控制不会", () => {
   const auditLog = runtime.homeAssistant.getAuditLog();
   assert.equal(auditLog.length, 1);
   assert.equal(auditLog[0].device_id, "light.living_room");
+});
+
+test("回家场景执行后逐项验证目标状态并写入审计记录", () => {
+  const runtime = createDeviceToolRuntime();
+  const result = runtime.invoke("run_scene", { scene_id: "home" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.scene_name, "回家模式");
+  assert.equal(result.executions.length, 4);
+  assert.ok(result.verification.every((entry) => entry.verified));
+  assert.equal(runtime.invoke("get_state", { device_id: "light.living_room" }).device.attributes.brightness, 70);
+  assert.equal(runtime.invoke("get_state", { device_id: "cover.living_room_curtain" }).device.state, "open");
+  assert.equal(runtime.invoke("get_state", { device_id: "climate.bedroom" }).device.state, "on");
+  assert.equal(runtime.homeAssistant.getAuditLog().length, 4);
+});
+
+test("场景预检发现离线设备时不执行任何部分动作", () => {
+  const runtime = createDeviceToolRuntime();
+  runtime.invoke("control_device", { device_id: "light.living_room", action: "turn_on" });
+  runtime.invoke("control_device", { device_id: "cover.living_room_curtain", action: "open" });
+  runtime.homeAssistant.devices.get("climate.bedroom").available = false;
+
+  const result = runtime.invoke("run_scene", { scene_id: "sleep" });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "SCENE_PREFLIGHT_FAILED");
+  assert.equal(runtime.invoke("get_state", { device_id: "light.living_room" }).device.state, "on");
+  assert.equal(runtime.invoke("get_state", { device_id: "cover.living_room_curtain" }).device.state, "open");
+  assert.equal(runtime.homeAssistant.getAuditLog().length, 2);
+});
+
+test("未知场景返回明确错误，场景不包含开锁", () => {
+  const runtime = createDeviceToolRuntime();
+  const result = runtime.invoke("run_scene", { scene_id: "weekend" });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "SCENE_NOT_FOUND");
+  assert.equal(runtime.homeAssistant.getAuditLog().length, 0);
+});
+
+test("诊断在线设备返回 healthy 和证据", () => {
+  const runtime = createDeviceToolRuntime();
+  const result = runtime.invoke("diagnose_device", { device_id: "light.living_room" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.count, 1);
+  assert.equal(result.diagnoses[0].status, "healthy");
+  assert.equal(result.diagnoses[0].code, "OK");
+  assert.equal(result.diagnoses[0].evidence[0].field, "available");
+});
+
+test("诊断离线设备返回 offline 和处理建议", () => {
+  const homeAssistant = new MockHomeAssistant({
+    devices: [
+      {
+        device_id: "light.offline",
+        name: "离线灯",
+        domain: "light",
+        state: "off",
+        available: false,
+        attributes: { brightness: 0 },
+      },
+    ],
+  });
+  const runtime = createDeviceToolRuntime(homeAssistant);
+  const result = runtime.invoke("diagnose_device", { device_id: "light.offline" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.diagnoses[0].status, "offline");
+  assert.equal(result.diagnoses[0].code, "DEVICE_OFFLINE");
+  assert.ok(result.diagnoses[0].recommendations.length > 0);
+});
+
+test("诊断在线但状态属性不一致的设备返回 abnormal", () => {
+  const homeAssistant = new MockHomeAssistant({
+    devices: [
+      {
+        device_id: "light.inconsistent",
+        name: "状态异常灯",
+        domain: "light",
+        state: "on",
+        available: true,
+        attributes: { brightness: 0 },
+      },
+    ],
+  });
+  const runtime = createDeviceToolRuntime(homeAssistant);
+  const result = runtime.invoke("diagnose_device", { device_id: "light.inconsistent" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.diagnoses[0].status, "abnormal");
+  assert.equal(result.diagnoses[0].code, "STATE_INCONSISTENT");
+  assert.ok(result.diagnoses[0].evidence.length > 1);
+});
+
+test("诊断全部设备返回汇总且不改变设备或审计记录", () => {
+  const runtime = createDeviceToolRuntime();
+  const result = runtime.invoke("diagnose_device");
+
+  assert.equal(result.success, true);
+  assert.equal(result.count, 4);
+  assert.equal(result.summary.healthy, 4);
+  assert.equal(result.summary.offline, 0);
+  assert.equal(runtime.homeAssistant.getAuditLog().length, 0);
 });
 
 test("未知工具返回 TOOL_NOT_FOUND", () => {

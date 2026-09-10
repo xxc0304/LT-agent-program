@@ -69,6 +69,29 @@ export const DEVICE_TOOL_DEFINITIONS = [
       { additionalProperties: false },
     ),
   },
+  {
+    name: "run_scene",
+    description: "执行预定义家庭场景。当前支持 home（回家模式）和 sleep（睡眠模式）；场景不包含开锁操作，执行前会检查设备可用性，执行后返回逐项验证结果。",
+    inputSchema: Type.Object(
+      {
+        scene_id: Type.Union([
+          Type.Literal("home", { description: "回家模式：开灯、开窗帘、开空调至 26℃。" }),
+          Type.Literal("sleep", { description: "睡眠模式：关灯、关窗帘、开空调至 26℃。" }),
+        ]),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  {
+    name: "diagnose_device",
+    description: "诊断指定设备或全部设备的在线状态、状态属性一致性，并返回证据和处理建议。该工具只读，不会控制设备。",
+    inputSchema: Type.Object(
+      {
+        device_id: Type.Optional(Type.String({ description: "可选的设备实体 ID；不填写时诊断全部设备。" })),
+      },
+      { additionalProperties: false },
+    ),
+  },
 ];
 
 export function createDeviceTools(homeAssistant = new MockHomeAssistant()) {
@@ -76,6 +99,8 @@ export function createDeviceTools(homeAssistant = new MockHomeAssistant()) {
     list_devices: (args = {}) => homeAssistant.listDevices(args),
     get_state: (args = {}) => homeAssistant.getState(args),
     control_device: (args = {}) => homeAssistant.controlDevice(args),
+    run_scene: (args = {}) => homeAssistant.runScene(args),
+    diagnose_device: (args = {}) => homeAssistant.diagnoseDevice(args),
   };
 }
 

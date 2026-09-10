@@ -20,7 +20,11 @@ show(
   runtime.invoke("get_state", { device_id: "light.living_room" }),
 );
 show(
-  "4. 未确认的开锁请求被拦截",
+  "4. 执行回家场景并逐项验证",
+  runtime.invoke("run_scene", { scene_id: "home" }),
+);
+show(
+  "5. 未确认的开锁请求被拦截",
   runtime.invoke("control_device", {
     device_id: "lock.front_door",
     action: "unlock",

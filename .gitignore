@@ -14,3 +14,7 @@ extracted/OpenClaw代码结构分析报告.md
 *.key
 credentials.json
 
+# Local SCB dataset and evaluation outputs (do not commit raw data)
+learning-behavior/data/scb/raw/
+learning-behavior/data/scb/images/
+learning-behavior/data/scb/results/

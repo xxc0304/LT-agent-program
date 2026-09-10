@@ -1,0 +1,15 @@
+{
+  "name": "lt-learning-behavior",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "基于视觉模型的 SCB 学习行为识别实验",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "analyze:image": "node src/evaluate-scb.js --image",
+    "evaluate:scb": "node src/evaluate-scb.js"
+  }
+}
