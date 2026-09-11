@@ -93,6 +93,19 @@ async function main() {
   for (const record of predicted) {
     confusion[record.label][record.predictedLabel] = (confusion[record.label][record.predictedLabel] ?? 0) + 1;
   }
+  const labelMetrics = Object.fromEntries(SCB_LABELS.map((label) => {
+    const truePositive = predicted.filter((record) => record.label === label && record.predictedLabel === label).length;
+    const falsePositive = predicted.filter((record) => record.label !== label && record.predictedLabel === label).length;
+    const falseNegative = predicted.filter((record) => record.label === label && record.predictedLabel !== label).length;
+    const support = predicted.filter((record) => record.label === label).length;
+    const precision = truePositive + falsePositive ? truePositive / (truePositive + falsePositive) : null;
+    const recall = truePositive + falseNegative ? truePositive / (truePositive + falseNegative) : null;
+    const f1 = precision !== null && recall !== null && precision + recall
+      ? (2 * precision * recall) / (precision + recall)
+      : null;
+    return [label, { support, precision, recall, f1 }];
+  }));
+  const latencies = predicted.map((record) => record.latencyMs).filter((value) => Number.isFinite(value));
   const result = {
     dataset: "SCB-Dataset",
     model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash-vision-exp",
@@ -100,6 +113,8 @@ async function main() {
     evaluated: predicted.length,
     accuracy: predicted.length ? correct / predicted.length : null,
     confusion,
+    perLabelMetrics: labelMetrics,
+    meanLatencyMs: latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : null,
     records,
   };
   if (args.out) {

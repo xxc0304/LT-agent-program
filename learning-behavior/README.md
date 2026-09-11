@@ -74,7 +74,15 @@ node src/evaluate-scb.js --manifest "C:\path\to\manifest.jsonl" --limit 20 --out
 node src/evaluate-scb.js --manifest "C:\path\to\manifest.jsonl" --per-label 3 --out results\scb-v41-flash.json
 ```
 
-结果会记录每张图片的真实标签、预测标签、置信度、耗时和错误信息，并汇总准确率和混淆矩阵。
+结果会记录每张图片的真实标签、预测标签、置信度、耗时和错误信息，并汇总准确率、混淆矩阵、每类 precision/recall/F1 和平均耗时。
+
+运行人工复核的 25 张评估集：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Run-VerifiedEvaluation.ps1
+```
+
+脚本会在本机终端询问 API Key，运行后只输出评估摘要，并在 `data/scb/results/` 保存结果。摘要由 Node.js 读取，避免旧版 PowerShell 的中文 JSON 解析问题。不要把 Key 发到聊天中。
 
 运行前检查文件和标签、不调用模型：
 

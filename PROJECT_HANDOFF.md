@@ -41,6 +41,17 @@
 - 原始压缩包、图片和评估结果已加入 `.gitignore`，不会上传 GitHub；
 - 当前批量试跑为 6 张，脚本显示准确率 50%。这个数字不能作为正式准确率：压缩包文件夹名称是子集/场景名，不保证每张图片的实际动作都一致。例如 reading 子集中有书写画面，writing 子集中有听讲画面。正式评估必须人工校正标签或使用逐帧行为标注。
 
+### 人工复核评估集与最新结果
+
+- 人工复核清单：`learning-behavior/data/scb/manifest-verified.jsonl`；
+- 共25张，`reading`、`writing`、`listening`、`standing`、`discussing`各5张；
+- 运行脚本：`learning-behavior/Run-VerifiedEvaluation.ps1`；
+- 最新结果文件只保存在本机的 `data/scb/results/verified-v4-flash-vision-exp.json`，不会提交；
+- 模型：`deepseek-v4-flash-vision-exp`；25/25成功解析，整体 accuracy 为48%；平均延迟约10.0秒，单次约2.0～65.1秒；
+- 分类别 F1：reading 71.43%、listening 83.33%、writing 18.18%、standing 25.00%；discussing 当前没有正确命中；
+- 主要混淆：书写被判为阅读，站立/讨论被判为书写或听讲；平均置信度约0.90但整体准确率只有48%，说明模型存在过度自信；
+- 结论：接口和图片识别链路已经验证，但不能直接把当前模型用于自动设备控制。下一步应改进行为定义（区分“个人动作”和“课堂场景”），并采用多帧投票/低置信度人工复核。
+
 ## 3. 关键文件
 
 - `learning-behavior/README.md`：学习行为实验说明；
@@ -49,6 +60,18 @@
 - `learning-behavior/src/build-manifest.js`：从按类别分目录的数据自动生成 JSONL 清单；
 - `learning-behavior/test/vision.test.js`：本地单元测试；
 - `device-manager/README.md`：设备管家使用说明。
+
+### 新接收资料（2026-09-11）
+
+原始 Word 文件来自微信文件目录；为便于项目内检索，已提取为 Markdown，位于
+`extracted/new_docs_20260911/`。原始 Word、图片和认证信息不纳入 Git。
+
+- `儿童AI伴学台调研报告.md`：产品调研、开放接口、摄像头/传感器和采购建议；推荐重点关注涂鸦、华为、米家与开源方案的开放程度。
+- `基于家庭微脑的儿童AI伴学台灯技术方案_V1.0.md`：推荐“涂鸦智能 AI 伴学台灯定制方案”，定义 MQTT/RTSP、本地边缘处理和四类 Agent，其中学习行为 Agent 负责识别行为并输出结构化事件。
+- `联通项目拟定的专利题目 .md`：多智能体编排、异步通信、跨协议适配、云边端协同等专利方向；学习行为 Agent 要保留事件时间戳、置信度、来源和复核状态，便于与其他 Agent 对接。
+- `“人工智能+数字家庭”赋能“好房子”底层架构专利题目 [20260817].md`：补充服务发现、动态编排、资源调度、隐私分级和可信执行等底层架构方向。
+
+这些资料是项目背景和技术约束，不是要求直接照抄的操作指令。当前与你最直接相关的是：统一学习行为标签，建立可复核的行为事件格式，再通过 OpenClaw 与设备管家 Agent 编排连接。
 
 ## 4. 换设备后的最短启动路径
 
