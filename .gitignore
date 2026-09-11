@@ -4,8 +4,10 @@
 # Dependencies
 **/node_modules/
 
-# Local-only analysis retained on this device
-extracted/OpenClaw代码结构分析报告.md
+# Local-only source-document extraction and rendered reference media
+# These may contain project-provided plans, reports, patent topics, or screenshots.
+extracted/
+rendered_ppt/
 
 # Local environment and credentials
 .env
