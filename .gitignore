@@ -1,5 +1,6 @@
 # Local runtime output
 *.log
+tmp/
 
 # Dependencies
 **/node_modules/
