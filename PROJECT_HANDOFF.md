@@ -2,7 +2,7 @@
 
 > 给换设备后的 Codex/协作者：先阅读本文件和根目录 `AGENTS.md`，再开始工作。不要重新研究已经完成的内容，也不要要求用户重复粘贴 API Key。当前工作区的密钥和本地数据均不在 Git 中。
 
-更新时间：2026-09-11
+更新时间：2026-09-14
 
 ## 1. 项目目标
 
@@ -53,6 +53,10 @@
 - 结论：接口和图片识别链路已经验证，但不能直接把当前模型用于自动设备控制。下一步应改进行为定义（区分“个人动作”和“课堂场景”），并采用多帧投票/低置信度人工复核。
 
 ## 3. 关键文件
+
+### Home Assistant 开发环境（最新进展）
+
+安装和验证记录见 `HOME_ASSISTANT_DEV_PROGRESS.md`。当前已完成 Docker Desktop/WSL 2、Home Assistant Core `2026.8.3`、Frontend `20260729.7` 和 VS Code Dev Containers 的开发环境配置；本机 `127.0.0.1:8123` 已能进入首次设置页面。凭据、运行日志和本地依赖均未上传。
 
 - `learning-behavior/README.md`：学习行为实验说明；
 - `learning-behavior/src/vision.js`：视觉请求、提示词、JSON 解析；
