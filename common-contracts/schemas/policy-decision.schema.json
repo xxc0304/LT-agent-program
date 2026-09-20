@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lt-agent-program.local/contracts/policy-decision.schema.json",
+  "title": "家庭微脑策略决策",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision", "decided_at", "reason"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "decision": { "enum": ["ALLOW", "DENY", "CHALLENGE"] },
+    "decided_at": { "type": "string", "format": "date-time" },
+    "reason": { "type": "string", "minLength": 1 },
+    "required_confirmation": { "type": "string" },
+    "trace_id": { "type": "string" }
+  }
+}

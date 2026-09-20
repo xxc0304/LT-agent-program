@@ -1,39 +1,11 @@
 import { readFileSync } from "node:fs";
 
-const DEFAULT_DEVICES_PATH = new URL("../config/devices.json", import.meta.url);
+import { isActionSatisfied } from "./action-verification.js";
+import { toCanonicalDevice } from "./canonical.js";
+import { DeviceEventLedger } from "./events.js";
+import { SCENES, verifyExpectedState } from "./scenes.js";
 
-const SCENES = Object.freeze({
-  home: {
-    name: "回家模式",
-    description: "打开客厅灯、打开客厅窗帘，并开启卧室空调至 26℃。",
-    steps: [
-      { device_id: "light.living_room", action: "set_brightness", parameters: { brightness: 70 } },
-      { device_id: "cover.living_room_curtain", action: "open" },
-      { device_id: "climate.bedroom", action: "turn_on" },
-      { device_id: "climate.bedroom", action: "set_temperature", parameters: { temperature: 26 } },
-    ],
-    expected: {
-      "light.living_room": { state: "on", attributes: { brightness: 70 } },
-      "cover.living_room_curtain": { state: "open", attributes: { position: 100 } },
-      "climate.bedroom": { state: "on", attributes: { temperature: 26 } },
-    },
-  },
-  sleep: {
-    name: "睡眠模式",
-    description: "关闭客厅灯、关闭客厅窗帘，并开启卧室空调至 26℃。",
-    steps: [
-      { device_id: "light.living_room", action: "turn_off" },
-      { device_id: "cover.living_room_curtain", action: "close" },
-      { device_id: "climate.bedroom", action: "turn_on" },
-      { device_id: "climate.bedroom", action: "set_temperature", parameters: { temperature: 26 } },
-    ],
-    expected: {
-      "light.living_room": { state: "off", attributes: { brightness: 0 } },
-      "cover.living_room_curtain": { state: "closed", attributes: { position: 0 } },
-      "climate.bedroom": { state: "on", attributes: { temperature: 26 } },
-    },
-  },
-});
+const DEFAULT_DEVICES_PATH = new URL("../config/devices.json", import.meta.url);
 
 function clone(value) {
   return structuredClone(value);
@@ -50,6 +22,11 @@ function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function numericState(device) {
+  const value = Number(device.state);
+  return Number.isFinite(value) ? value : null;
+}
+
 /**
  * A deterministic, in-memory stand-in for Home Assistant.
  *
@@ -62,9 +39,10 @@ export class MockHomeAssistant {
     const initialDevices = devices ?? JSON.parse(readFileSync(DEFAULT_DEVICES_PATH, "utf8"));
     this.devices = new Map(initialDevices.map((device) => [device.device_id, clone(device)]));
     this.auditLog = [];
+    this.eventLedger = new DeviceEventLedger();
   }
 
-  listDevices({ domain } = {}) {
+  listDevices({ domain, canonical = false } = {}) {
     const devices = [...this.devices.values()]
       .filter((device) => !domain || device.domain === domain)
       .map(clone);
@@ -72,11 +50,11 @@ export class MockHomeAssistant {
     return {
       success: true,
       count: devices.length,
-      devices,
+      devices: canonical ? devices.map((device) => toCanonicalDevice(device)) : devices,
     };
   }
 
-  getState({ device_id } = {}) {
+  getState({ device_id, canonical = false } = {}) {
     if (!device_id) {
       return failure("INVALID_ARGUMENT", "device_id 是必填参数");
     }
@@ -88,24 +66,43 @@ export class MockHomeAssistant {
 
     return {
       success: true,
-      device: clone(device),
+      device: canonical ? toCanonicalDevice(device) : clone(device),
     };
   }
 
-  diagnoseDevice({ device_id } = {}) {
+  diagnoseDevice({ device_id, trace_id = null } = {}) {
     if (device_id) {
       const device = this.devices.get(device_id);
       if (!device) {
         return failure("DEVICE_NOT_FOUND", `未找到设备：${device_id}`, { device_id });
       }
+      const diagnosis = this.#diagnoseOne(device);
+      if (diagnosis.status !== "healthy") {
+        this.eventLedger.append({
+          event_type: "diagnostic_alert",
+          device_id,
+          severity: diagnosis.status === "offline" ? "critical" : "warning",
+          trace_id,
+          payload: { code: diagnosis.code, summary: diagnosis.summary },
+        });
+      }
       return {
         success: true,
         count: 1,
-        diagnoses: [this.#diagnoseOne(device)],
+        diagnoses: [diagnosis],
       };
     }
 
     const diagnoses = [...this.devices.values()].map((device) => this.#diagnoseOne(device));
+    for (const diagnosis of diagnoses.filter((item) => item.status !== "healthy")) {
+      this.eventLedger.append({
+        event_type: "diagnostic_alert",
+        device_id: diagnosis.device_id,
+        severity: diagnosis.status === "offline" ? "critical" : "warning",
+        trace_id,
+        payload: { code: diagnosis.code, summary: diagnosis.summary },
+      });
+    }
     return {
       success: true,
       count: diagnoses.length,
@@ -152,6 +149,9 @@ export class MockHomeAssistant {
         issues.push(`灯具状态与亮度不一致：state=${device.state}, brightness=${brightness}`);
       }
     }
+    if (device.domain === "switch" && !["on", "off"].includes(device.state)) {
+      issues.push(`插座状态异常：${device.state}`);
+    }
     if (device.domain === "climate") {
       const { temperature, min_temperature: min, max_temperature: max } = device.attributes ?? {};
       if (!isFiniteNumber(temperature) || temperature < min || temperature > max) {
@@ -169,6 +169,16 @@ export class MockHomeAssistant {
     }
     if (device.domain === "lock" && !["locked", "unlocked"].includes(device.state)) {
       issues.push(`门锁状态异常：${device.state}`);
+    }
+    if (device.domain === "sensor") {
+      const value = numericState(device);
+      const { min_value: min, max_value: max } = device.attributes ?? {};
+      if (value === null || !isFiniteNumber(min) || !isFiniteNumber(max) || value < min || value > max) {
+        issues.push(`传感器数值异常：${device.state}（允许 ${min}-${max}）`);
+      }
+    }
+    if (device.domain === "binary_sensor" && !["on", "off"].includes(device.state)) {
+      issues.push(`二值传感器状态异常：${device.state}`);
     }
 
     if (issues.length === 0) return base;
@@ -222,9 +232,7 @@ export class MockHomeAssistant {
     const verification = Object.entries(scene.expected).map(([device_id, expected]) => {
       const result = this.getState({ device_id });
       const device = result.device;
-      const verified = result.success
-        && device.state === expected.state
-        && Object.entries(expected.attributes).every(([key, value]) => device.attributes[key] === value);
+      const verified = result.success && verifyExpectedState(device, expected);
       return { device_id, expected, verified, result };
     });
 
@@ -239,36 +247,85 @@ export class MockHomeAssistant {
     };
   }
 
-  controlDevice({ device_id, action, parameters = {}, confirmed = false } = {}) {
+  controlDevice({ device_id, action, parameters = {}, confirmed = false, trace_id = null, task_id = null, idempotency_key = null } = {}) {
     if (!device_id || !action) {
       return failure("INVALID_ARGUMENT", "device_id 和 action 是必填参数");
     }
 
     const device = this.devices.get(device_id);
     if (!device) {
+      this.eventLedger.append({
+        event_type: "action_failed",
+        device_id,
+        severity: "warning",
+        trace_id,
+        payload: { action, code: "DEVICE_NOT_FOUND" },
+      });
       return failure("DEVICE_NOT_FOUND", `未找到设备：${device_id}`, { device_id });
     }
     if (!device.available) {
+      this.eventLedger.append({
+        event_type: "action_failed",
+        device_id,
+        severity: "warning",
+        trace_id,
+        payload: { action, code: "DEVICE_UNAVAILABLE" },
+      });
       return failure("DEVICE_UNAVAILABLE", `设备当前不可用：${device.name}`, { device_id });
     }
 
     const before = clone(device);
     const actionResult = this.#applyAction(device, action, parameters, confirmed);
     if (!actionResult.success) {
+      this.eventLedger.append({
+        event_type: "action_failed",
+        device_id,
+        severity: actionResult.error.code === "CONFIRMATION_REQUIRED" ? "critical" : "warning",
+        trace_id,
+        payload: { action, code: actionResult.error.code, message: actionResult.error.message },
+      });
       return actionResult;
     }
 
     const after = clone(device);
+    const verified = isActionSatisfied(after, action, parameters);
     const auditEntry = {
       sequence: this.auditLog.length + 1,
       device_id,
       action,
       parameters: clone(parameters),
       confirmed,
+      task_id,
+      trace_id,
+      idempotency_key,
+      verified,
       before,
       after,
     };
     this.auditLog.push(auditEntry);
+
+    this.eventLedger.append({
+      event_type: verified ? "action_executed" : "action_failed",
+      device_id,
+      severity: verified ? "info" : "warning",
+      trace_id,
+      payload: {
+        action,
+        task_id,
+        idempotency_key,
+        verified,
+        old_state: before.state,
+        new_state: after.state,
+      },
+    });
+
+    if (!verified) {
+      return failure(
+        "POST_ACTION_VERIFICATION_FAILED",
+        "设备控制请求已执行，但状态回读未达到目标",
+        { device_id, action, verified: false, device: after },
+      );
+    }
 
     return {
       success: true,
@@ -277,6 +334,8 @@ export class MockHomeAssistant {
       old_state: before.state,
       new_state: after.state,
       device: after,
+      canonical_device: toCanonicalDevice(after),
+      verified,
       verification_required: true,
     };
   }
@@ -285,10 +344,16 @@ export class MockHomeAssistant {
     return clone(this.auditLog);
   }
 
+  getEvents(filters = {}) {
+    return this.eventLedger.list(filters);
+  }
+
   #applyAction(device, action, parameters, confirmed) {
     switch (device.domain) {
       case "light":
         return this.#controlLight(device, action, parameters);
+      case "switch":
+        return this.#controlSwitch(device, action);
       case "climate":
         return this.#controlClimate(device, action, parameters);
       case "cover":
@@ -321,6 +386,20 @@ export class MockHomeAssistant {
       return { success: true };
     }
     return failure("UNSUPPORTED_ACTION", `灯具不支持操作：${action}`);
+  }
+
+  #controlSwitch(device, action) {
+    if (action === "turn_on") {
+      device.state = "on";
+      device.attributes.power_w = device.attributes.power_w || 1;
+      return { success: true };
+    }
+    if (action === "turn_off") {
+      device.state = "off";
+      device.attributes.power_w = 0;
+      return { success: true };
+    }
+    return failure("UNSUPPORTED_ACTION", `插座不支持操作：${action}`);
   }
 
   #controlClimate(device, action, parameters) {

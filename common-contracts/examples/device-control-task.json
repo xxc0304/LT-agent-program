@@ -1,0 +1,19 @@
+{
+  "schema_version": "0.1",
+  "task_id": "task-demo-001",
+  "source_agent": "learning-behavior",
+  "target_agent": "device-manager",
+  "task_type": "control_device",
+  "priority": "normal",
+  "deadline_ms": 5000,
+  "resource_requirement": {
+    "execution_mode": "local",
+    "capabilities": ["home_assistant"]
+  },
+  "privacy_level": "family",
+  "trace_id": "trace-demo-001",
+  "payload": {
+    "device_id": "light.living_room",
+    "action": "turn_on"
+  }
+}

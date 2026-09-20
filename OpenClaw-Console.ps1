@@ -11,10 +11,14 @@ try {
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = "$nodeDir;$npmBin;$machinePath;$userPath;$env:Path"
+    # Keep the team-aligned OpenClaw 2026.7.1-2 profile separate from any newer profile.
+    $env:OPENCLAW_STATE_DIR = Join-Path $env:USERPROFILE '.openclaw-2026.7.1-2\state'
+    $env:OPENCLAW_CONFIG_PATH = Join-Path $env:USERPROFILE '.openclaw-2026.7.1-2\openclaw.json'
 
     Write-Host 'OpenClaw Console' -ForegroundColor Cyan
     Write-Host "Windows account: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
     Write-Host "OpenClaw command: $shim"
+    Write-Host "OpenClaw profile: $env:OPENCLAW_CONFIG_PATH"
     Write-Host ''
 
     if (-not (Test-Path -LiteralPath $shim -PathType Leaf)) {

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lt-agent-program.local/contracts/task-receipt.schema.json",
+  "title": "家庭微脑任务回执",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "target_agent", "status", "completed_at"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "task_id": { "type": "string", "minLength": 1 },
+    "target_agent": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["SUCCEEDED", "FAILED", "DENIED", "CHALLENGE", "TIMEOUT", "RETRYABLE"] },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "result": { "type": "object" },
+    "error": { "type": "object" },
+    "audit_ref": { "type": "string" },
+    "trace_id": { "type": "string" },
+    "elapsed_ms": { "type": "integer", "minimum": 0 }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt_000001",
+  "source_agent": "device-manager",
+  "event_type": "action_executed",
+  "occurred_at": "2026-09-19T00:00:00.000Z",
+  "received_at": "2026-09-19T00:00:00.000Z",
+  "privacy_level": "family",
+  "trace_id": "trace-demo-001",
+  "source": {
+    "type": "simulator",
+    "id": "device-manager-mock"
+  },
+  "subject": {
+    "device_id": "light.living_room"
+  },
+  "severity": "info",
+  "data_level": "L0",
+  "dedup_key": "light.living_room:action_executed:1",
+  "payload": {
+    "action": "turn_on",
+    "verified": true,
+    "old_state": "off",
+    "new_state": "on"
+  }
+}

@@ -1,7 +1,7 @@
 {
   "id": "device-manager",
   "name": "家庭设备管家",
-  "description": "为家庭微脑提供 Mock Home Assistant 设备发现、状态查询、安全控制和场景编排工具。",
+  "description": "为家庭微脑提供 Home Assistant 设备发现、状态查询、安全控制和场景编排工具，支持 Mock 与真实 REST API 后端。",
   "version": "0.1.0",
   "activation": {
     "onStartup": true
@@ -17,7 +17,8 @@
       "get_state",
       "control_device",
       "run_scene",
-      "diagnose_device"
+      "diagnose_device",
+      "get_device_events"
     ]
   }
 }

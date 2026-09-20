@@ -1,6 +1,7 @@
 [
   {
     "device_id": "light.living_room",
+    "canonical_id": "light_livingroom_001",
     "name": "客厅灯",
     "domain": "light",
     "state": "off",
@@ -11,6 +12,7 @@
   },
   {
     "device_id": "climate.bedroom",
+    "canonical_id": "climate_bedroom_001",
     "name": "卧室空调",
     "domain": "climate",
     "state": "off",
@@ -23,6 +25,7 @@
   },
   {
     "device_id": "cover.living_room_curtain",
+    "canonical_id": "curtain_livingroom_001",
     "name": "客厅窗帘",
     "domain": "cover",
     "state": "closed",
@@ -33,10 +36,90 @@
   },
   {
     "device_id": "lock.front_door",
+    "canonical_id": "lock_frontdoor_001",
     "name": "入户门锁",
     "domain": "lock",
     "state": "locked",
     "available": true,
     "attributes": {}
+  },
+  {
+    "device_id": "sensor.living_room_temperature",
+    "canonical_id": "sensor_livingroom_temperature_001",
+    "name": "客厅温度传感器",
+    "domain": "sensor",
+    "state": "22.5",
+    "available": true,
+    "attributes": {
+      "unit": "°C",
+      "device_class": "temperature",
+      "min_value": -20,
+      "max_value": 60
+    }
+  },
+  {
+    "device_id": "sensor.living_room_humidity",
+    "canonical_id": "sensor_livingroom_humidity_001",
+    "name": "客厅湿度传感器",
+    "domain": "sensor",
+    "state": "52",
+    "available": true,
+    "attributes": {
+      "unit": "%",
+      "device_class": "humidity",
+      "min_value": 0,
+      "max_value": 100
+    }
+  },
+  {
+    "device_id": "binary_sensor.living_room_motion",
+    "canonical_id": "sensor_livingroom_motion_001",
+    "name": "客厅人体感应器",
+    "domain": "binary_sensor",
+    "state": "off",
+    "available": true,
+    "attributes": {
+      "device_class": "motion",
+      "last_triggered": null
+    }
+  },
+  {
+    "device_id": "binary_sensor.front_door_contact",
+    "canonical_id": "sensor_frontdoor_contact_001",
+    "name": "入户门磁",
+    "domain": "binary_sensor",
+    "state": "off",
+    "available": true,
+    "attributes": {
+      "device_class": "door",
+      "last_triggered": null
+    }
+  },
+  {
+    "device_id": "binary_sensor.kitchen_smoke",
+    "canonical_id": "sensor_kitchen_smoke_001",
+    "name": "厨房烟雾传感器",
+    "domain": "binary_sensor",
+    "state": "off",
+    "available": true,
+    "attributes": {
+      "device_class": "smoke",
+      "last_triggered": null
+    }
+  },
+  {
+    "device_id": "switch.living_room_plug",
+    "canonical_id": "plug_livingroom_001",
+    "name": "客厅小米插座",
+    "domain": "switch",
+    "state": "off",
+    "available": true,
+    "attributes": {
+      "power_w": 0,
+      "voltage_v": 220,
+      "current_a": 0,
+      "manufacturer": "xiaomi",
+      "model": "smart_plug_demo"
+    }
   }
 ]

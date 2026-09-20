@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lt-agent-program.local/contracts/event.schema.json",
+  "title": "家庭微脑事件",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "source_agent", "event_type", "occurred_at", "privacy_level", "payload"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "event_id": { "type": "string", "minLength": 1 },
+    "source_agent": { "type": "string", "minLength": 1 },
+    "event_type": { "type": "string", "minLength": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "received_at": { "type": "string", "format": "date-time" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "needs_review": { "type": "boolean", "default": false },
+    "privacy_level": { "enum": ["family", "sensitive", "restricted"] },
+    "trace_id": { "type": "string" },
+    "payload": { "type": "object" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "device_id": { "type": ["string", "null"] }
+      }
+    },
+    "severity": { "enum": ["info", "warning", "critical"] },
+    "data_level": { "enum": ["L0", "L1", "L2", "L3"] },
+    "dedup_key": { "type": "string", "minLength": 1 }
+  }
+}

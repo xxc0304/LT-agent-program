@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1",
+  "task_id": "task-demo-001",
+  "target_agent": "device-manager",
+  "status": "SUCCEEDED",
+  "completed_at": "2026-09-17T00:00:00.000Z",
+  "trace_id": "trace-demo-001",
+  "result": {
+    "device_id": "light.living_room",
+    "new_state": "on",
+    "verified": true
+  },
+  "audit_ref": "device-manager-audit-001"
+}

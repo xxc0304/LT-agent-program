@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lt-agent-program.local/contracts/resource-status.schema.json",
+  "title": "家庭微脑资源状态",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "resource_id", "status", "observed_at"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "resource_id": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["AVAILABLE", "BUSY", "OFFLINE", "DEGRADED"] },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "capacity": { "type": "number", "minimum": 0 },
+    "metadata": { "type": "object" }
+  }
+}

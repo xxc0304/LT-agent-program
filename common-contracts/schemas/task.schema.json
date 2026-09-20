@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lt-agent-program.local/contracts/task.schema.json",
+  "title": "家庭微脑任务",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task_id", "source_agent", "target_agent", "task_type", "priority", "deadline_ms", "resource_requirement", "privacy_level", "payload"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "0.1" },
+    "task_id": { "type": "string", "minLength": 1 },
+    "source_agent": { "type": "string", "minLength": 1 },
+    "target_agent": { "type": "string", "minLength": 1 },
+    "task_type": { "enum": ["control_device", "get_state", "run_scene", "diagnose_device"] },
+    "priority": { "enum": ["low", "normal", "high", "critical"] },
+    "deadline_ms": { "type": "integer", "minimum": 0 },
+    "resource_requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_mode"],
+      "properties": {
+        "execution_mode": { "enum": ["local", "edge", "cloud"] },
+        "capabilities": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "privacy_level": { "enum": ["family", "sensitive", "restricted"] },
+    "trace_id": { "type": "string" },
+    "payload": { "type": "object" }
+  }
+}
