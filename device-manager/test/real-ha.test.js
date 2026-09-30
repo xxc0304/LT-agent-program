@@ -295,3 +295,111 @@ test("真实 HA 场景预检失败时不执行任何控制服务", async () => {
   assert.equal(result.error.cause, "DEVICE_NOT_FOUND");
   assert.equal(postCount, 0);
 });
+
+test("真实 HA 执行已确认的个性化场景时使用目标温度并逐项回读", async () => {
+  const states = {
+    "light.living_room": entity("light.living_room", "on", { brightness: 255 }),
+    "cover.living_room_curtain": entity("cover.living_room_curtain", "open", { current_position: 100 }),
+    "climate.bedroom": entity("climate.bedroom", "off", {
+      temperature: 26,
+      min_temp: 16,
+      max_temp: 30,
+    }),
+  };
+  const serviceCalls = [];
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url);
+    const statePrefix = "/api/states/";
+    if (parsed.pathname.startsWith(statePrefix)) {
+      const deviceId = decodeURIComponent(parsed.pathname.slice(statePrefix.length));
+      return states[deviceId] ? jsonResponse(states[deviceId]) : jsonResponse({ message: "not found" }, 404);
+    }
+
+    if (parsed.pathname.startsWith("/api/services/") && options.method === "POST") {
+      const request = JSON.parse(options.body);
+      const service = parsed.pathname.split("/").slice(-2).join("/");
+      serviceCalls.push({ service, request });
+      const deviceId = request.entity_id;
+      const current = states[deviceId];
+      if (!current) return jsonResponse({ message: "not found" }, 404);
+
+      if (service === "light/turn_off") {
+        states[deviceId] = entity(deviceId, "off", { brightness: 0 });
+      } else if (service === "cover/close_cover") {
+        states[deviceId] = entity(deviceId, "closed", { current_position: 0 });
+      } else if (service === "climate/turn_on") {
+        states[deviceId] = entity(deviceId, "cool", current.attributes);
+      } else if (service === "climate/set_temperature") {
+        states[deviceId] = entity(deviceId, "cool", {
+          ...current.attributes,
+          temperature: request.temperature,
+        });
+      } else {
+        return jsonResponse({ message: `unexpected service ${service}` }, 400);
+      }
+      return jsonResponse([]);
+    }
+    return jsonResponse({ message: "not found" }, 404);
+  };
+  const client = new RealHomeAssistant({
+    baseUrl: "http://ha.local:8123",
+    token: "test-token",
+    fetchImpl,
+  });
+
+  const result = await client.runScene({
+    scene_id: "sleep",
+    planned_temperature_c: 24,
+    task_id: "plan-real-001",
+    trace_id: "plan-real-001",
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.planned_temperature_c, 24);
+  assert.equal(result.task_id, "plan-real-001");
+  assert.ok(result.verification.every((entry) => entry.verified));
+  assert.deepEqual(serviceCalls.find((call) => call.service === "climate/set_temperature")?.request, {
+    entity_id: "climate.bedroom",
+    temperature: 24,
+  });
+  assert.equal(client.getAuditLog().length, 4);
+  assert.ok(client.getAuditLog().every((entry) => entry.task_id === "plan-real-001"));
+  assert.equal(client.getEvents().length, 4);
+  assert.ok(client.getEvents().every((event) => event.trace_id === "plan-real-001"));
+});
+
+test("真实 HA 个性化温度在预检时越界则不调用任何控制服务", async () => {
+  let postCount = 0;
+  const states = {
+    "light.living_room": entity("light.living_room", "on", { brightness: 255 }),
+    "cover.living_room_curtain": entity("cover.living_room_curtain", "open", { current_position: 100 }),
+    "climate.bedroom": entity("climate.bedroom", "off", {
+      temperature: 26,
+      min_temp: 25,
+      max_temp: 30,
+    }),
+  };
+  const fetchImpl = async (url, options) => {
+    const parsed = new URL(url);
+    const prefix = "/api/states/";
+    if (parsed.pathname.startsWith(prefix)) {
+      const deviceId = decodeURIComponent(parsed.pathname.slice(prefix.length));
+      return states[deviceId] ? jsonResponse(states[deviceId]) : jsonResponse({ message: "not found" }, 404);
+    }
+    if (options.method === "POST") postCount += 1;
+    return jsonResponse([]);
+  };
+  const client = new RealHomeAssistant({
+    baseUrl: "http://ha.local:8123",
+    token: "test-token",
+    fetchImpl,
+  });
+
+  const result = await client.runScene({ scene_id: "sleep", planned_temperature_c: 24 });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "SCENE_PREFLIGHT_FAILED");
+  assert.equal(result.error.cause, "PREFERENCE_OUTSIDE_DEVICE_RANGE");
+  assert.equal(postCount, 0);
+  assert.equal(client.getAuditLog().length, 0);
+});

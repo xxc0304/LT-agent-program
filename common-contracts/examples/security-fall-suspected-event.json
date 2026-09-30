@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-security-fall-001",
+  "source_agent": "edge-vision-adapter",
+  "event_type": "fall_suspected",
+  "occurred_at": "2026-09-27T08:02:00.000Z",
+  "received_at": "2026-09-27T08:02:00.200Z",
+  "confidence": 0.71,
+  "needs_review": true,
+  "privacy_level": "restricted",
+  "trace_id": "trace-security-fall-001",
+  "source": {
+    "type": "edge_model",
+    "id": "fall-detector-mock"
+  },
+  "subject": {
+    "device_id": "camera.living_room"
+  },
+  "severity": "critical",
+  "data_level": "L3",
+  "dedup_key": "camera.living_room:fall_suspected:2026-09-27T08:02Z",
+  "payload": {
+    "area": "living_room",
+    "observation": "possible_fall",
+    "requires_human_review": true,
+    "media_attached": false
+  }
+}

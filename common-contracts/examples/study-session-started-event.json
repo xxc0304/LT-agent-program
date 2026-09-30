@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-study-session-started-001",
+  "source_agent": "learning-companion",
+  "event_type": "study_session_started",
+  "occurred_at": "2026-09-27T08:10:00.000Z",
+  "received_at": "2026-09-27T08:10:00.100Z",
+  "needs_review": false,
+  "privacy_level": "sensitive",
+  "trace_id": "trace-study-session-001",
+  "source": {
+    "type": "user_confirmed_ui",
+    "id": "study-session-button"
+  },
+  "severity": "info",
+  "data_level": "L2",
+  "dedup_key": "study-session-local-001:started",
+  "payload": {
+    "session_id": "study-session-local-001",
+    "area": "study_area",
+    "start_mode": "explicit_user_action"
+  }
+}

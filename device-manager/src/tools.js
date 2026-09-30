@@ -79,7 +79,7 @@ export const DEVICE_TOOL_DEFINITIONS = [
   },
   {
     name: "run_scene",
-    description: "执行预定义家庭场景。当前支持 home（回家模式）、sleep（睡眠模式）和 away（离家模式）；场景不包含开锁操作，执行前会检查设备可用性，执行后返回逐项验证结果。",
+    description: "固定参数场景执行器。面向用户的场景请求必须先调用 plan_scene 展示计划，并在用户后续原样确认后调用 execute_scene_plan；不要用 run_scene 绕过确认或执行个性化温度。",
     inputSchema: Type.Object(
       {
         scene_id: Type.Union([

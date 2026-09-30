@@ -1,0 +1,13 @@
+{
+  "schema_version": "0.1",
+  "device_id": "light.study_desk",
+  "name": "书桌台灯（模拟）",
+  "domain": "light",
+  "state": "off",
+  "available": true,
+  "attributes": {
+    "area": "study_area",
+    "brightness": 0
+  },
+  "observed_at": "2026-09-27T08:00:00.000Z"
+}

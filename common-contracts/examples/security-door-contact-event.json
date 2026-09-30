@@ -1,0 +1,27 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-security-door-001",
+  "source_agent": "home-assistant-adapter",
+  "event_type": "door_contact_changed",
+  "occurred_at": "2026-09-27T08:01:00.000Z",
+  "received_at": "2026-09-27T08:01:00.100Z",
+  "confidence": 1,
+  "needs_review": false,
+  "privacy_level": "family",
+  "trace_id": "trace-security-door-001",
+  "source": {
+    "type": "binary_sensor",
+    "id": "binary_sensor.front_door"
+  },
+  "subject": {
+    "device_id": "binary_sensor.front_door"
+  },
+  "severity": "info",
+  "data_level": "L1",
+  "dedup_key": "binary_sensor.front_door:open:2026-09-27T08:01:00Z",
+  "payload": {
+    "area": "entryway",
+    "contact_state": "open",
+    "state_source": "home_assistant"
+  }
+}

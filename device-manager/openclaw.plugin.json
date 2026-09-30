@@ -1,7 +1,7 @@
 {
   "id": "device-manager",
   "name": "家庭设备管家",
-  "description": "为家庭微脑提供 Home Assistant 设备发现、状态查询、安全控制和场景编排工具，支持 Mock 与真实 REST API 后端。",
+  "description": "为家庭微脑提供设备查询/控制、多 Agent 事件调度、家庭偏好记忆，以及经用户确认后执行并回读的场景工具，支持 Mock 与真实 Home Assistant REST 后端。",
   "version": "0.1.0",
   "activation": {
     "onStartup": true
@@ -18,7 +18,17 @@
       "control_device",
       "run_scene",
       "diagnose_device",
-      "get_device_events"
+      "get_device_events",
+      "dispatch_agent_event",
+      "get_household_preference",
+      "list_household_memories",
+      "remember_household_preference",
+      "propose_household_memory_candidate",
+      "confirm_household_memory_candidate",
+      "preview_household_routine",
+      "forget_household_memory",
+      "plan_scene",
+      "execute_scene_plan"
     ]
   }
 }

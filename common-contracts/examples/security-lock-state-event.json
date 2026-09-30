@@ -1,0 +1,27 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-security-lock-001",
+  "source_agent": "home-assistant-adapter",
+  "event_type": "door_lock_state_changed",
+  "occurred_at": "2026-09-27T08:04:00.000Z",
+  "received_at": "2026-09-27T08:04:00.100Z",
+  "confidence": 1,
+  "needs_review": false,
+  "privacy_level": "sensitive",
+  "trace_id": "trace-security-lock-001",
+  "source": {
+    "type": "lock",
+    "id": "lock.front_door"
+  },
+  "subject": {
+    "device_id": "lock.front_door"
+  },
+  "severity": "warning",
+  "data_level": "L2",
+  "dedup_key": "lock.front_door:unlocked:2026-09-27T08:04Z",
+  "payload": {
+    "area": "entryway",
+    "lock_state": "unlocked",
+    "change_source": "mock_device_event"
+  }
+}

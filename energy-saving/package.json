@@ -1,0 +1,14 @@
+{
+  "name": "lt-energy-saving-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "家庭微脑节能 Agent：根据家庭状态生成经过安全约束的设备节能任务",
+  "scripts": {
+    "demo": "node src/demo.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -15,11 +15,22 @@
 - `PolicyDecision`：允许、拒绝或需要人工确认的策略结果；
 - `ResourceStatus`：算力或执行节点的可用状态。
 
-## 设备管家当前接入的任务类型
+HA 设备统一视图到协议组 UDM 的字段映射草案见 [`UDM_MAPPING_DRAFT_v0.1.md`](./UDM_MAPPING_DRAFT_v0.1.md)。文档区分了当前可从 HA State 取得的内容与需要额外 Device/Area Registry、事件流或显式策略配置的内容；没有来源的数据不猜测、不伪造。
 
-`control_device`、`get_state`、`run_scene`、`diagnose_device`。
+Task 旧字段别名、优先级和数据级别的本地兼容规则见 [`TASK_COMPATIBILITY_DRAFT_v0.1.md`](./TASK_COMPATIBILITY_DRAFT_v0.1.md)。此文档是 Agent 组讨论稿，不是跨组定稿；调度器入口会校验 `source_agent/source`、`target_agent/target` 一致后规范化为 canonical 字段，设备管家直连接口也会拒绝冲突值。设备管家会检查 canonical Task 的必填字段和关键枚举，按 `resource_requirement` 转换内部路由要求，不从 `compute_requirement` 推断执行位置；旧策略兼容类按显式 `privacy_level` 与本地 `data_level` 派生类中的更严格者处理。
+
+别名转换由 [`task-compat.mjs`](./task-compat.mjs) 统一实现；两处 Agent 边界共用该模块，回归测试位于 `common-contracts/test/`。调度器在排队前还会验证 canonical Task 的版本、优先级、数据/隐私级别、设备 ID、执行模式和截止时间，非法任务不会进入队列。
+
+## 当前任务形态
+
+草案暂时兼容两种实现：
+
+- 设备管家旧任务：`control_device`、`get_state`、`run_scene`、`diagnose_device`，通过 `payload` 携带参数；
+- canonical 设备动作任务：`device_action`，通过 `target_ref`、`action`、`parameters`、`idempotency_key` 和 `trace_id` 表达。
 
 设备管家的标准任务入口暂时以代码运行时形式提供，后续可由编排器、消息队列或 OpenClaw 工具调用。现阶段不把它误称为已经存在的其他 Agent。
+
+旧任务保留 `low/normal/high/critical` 优先级；canonical Task 使用 `P0`–`P4`。这只是本地兼容，统一枚举仍须跨组确认。`Task.status`（任务生命周期）与 `TaskReceipt.status`（执行回执结果）是不同语义；回执中的 `CHALLENGE`、`TIMEOUT`、`RETRYABLE` 不应作为任务生命周期值使用。
 
 ## 字段约定
 
@@ -40,6 +51,8 @@
 node common-contracts/validate-examples.mjs
 ```
 
+当前校验覆盖 Device、ResourceStatus、PolicyDecision、旧/新版 Task、TaskReceipt、学习、安全及作息到期事件等 **18 个有效样例**，并确认 **4 个无效样例（缺字段或别名冲突）会被拒绝**。校验器无第三方依赖，仅实现本仓库 Schema 当前使用的 JSON Schema 关键字子集，并对 Task 别名一致性做额外语义校验；若 Schema 引入新关键字，需同步扩展校验器或换用完整 JSON Schema 实现。
+
 设备管家任务入口测试：
 
 ```powershell
@@ -56,3 +69,9 @@ npm test
 3. 优先级、隐私级别和超时字段的枚举；
 4. PolicyDecision 由哪个 Agent 产生，以及 `CHALLENGE` 的确认回传方式；
 5. 公共契约由谁维护、如何版本发布。
+6. Device 当前 HA 统一视图如何映射到协议组 UDM 字段（vendor、location、properties、events、services、constraints、securityLevel、version）；
+7. 飞书计划中的数据级别 L1–L4 与当前代码草案 L0–L3 的映射。未确认前，两套编号不能宣称已统一。
+
+本轮已将 `ResourceStatus`、`PolicyDecision` 草案 Schema/样例对齐到本组 Mock 编排器，并增加了 Mock canonical Task 的校验样例。Task 示例会带上与 canonical 字段相同的旧别名以覆盖兼容规则；跨边界时调度器会归一化为 canonical 字段。优先级和数据级别的跨组语义尚未确认。所有内容仍是本组可供评审的 v0.1 讨论稿，不代表已跨组联调或冻结；定稿前要由对应小组共同确认并同步修改 Schema、示例和代码适配器。
+
+事件、设备和任务样例只用于本地 Mock/契约测试；`security-*-event.json` 均为模拟输入，不代表真实传感器、摄像头或识别模型结果。

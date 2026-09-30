@@ -1,0 +1,18 @@
+{
+  "name": "lt-multi-agent-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "家庭微脑最小多 Agent 调度器和学习行为事件适配器",
+  "scripts": {
+    "demo": "node src/demo.js",
+    "demo:scene-review": "node src/demo-scene-review.js",
+    "replay:scene-pilot": "node src/replay-scene-pilot.js",
+    "run:image": "node src/run-image.js",
+    "run:sequence": "node src/run-sequence.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

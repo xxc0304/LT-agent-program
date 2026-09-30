@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-learning-demo-001",
+  "source_agent": "learning-companion",
+  "event_type": "learning_behavior",
+  "occurred_at": "2026-09-22T00:00:00.000Z",
+  "received_at": "2026-09-22T00:00:00.100Z",
+  "confidence": 0.95,
+  "needs_review": false,
+  "privacy_level": "restricted",
+  "data_level": "L3",
+  "trace_id": "trace-learning-demo-001",
+  "source": {
+    "type": "learning_behavior_model",
+    "id": "learning-companion"
+  },
+  "payload": {
+    "behavior": "standing",
+    "presence": "away_from_desk",
+    "area": "living_room",
+    "duration_ms": 600000,
+    "evidence": "连续多帧未检测到孩子在书桌区域"
+  }
+}

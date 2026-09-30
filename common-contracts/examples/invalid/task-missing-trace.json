@@ -1,0 +1,19 @@
+{
+  "schema_version": "0.1",
+  "task_id": "task-invalid-no-trace",
+  "source_agent": "energy-saving",
+  "target_agent": "device-manager",
+  "task_type": "device_action",
+  "target_ref": {
+    "device_id": "light.study_desk"
+  },
+  "action": "turn_off",
+  "priority": "P3",
+  "deadline_ms": 30000,
+  "data_level": "L0",
+  "privacy_level": "family",
+  "resource_requirement": {
+    "execution_mode": "local"
+  },
+  "idempotency_key": "invalid-task-key"
+}

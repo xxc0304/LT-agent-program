@@ -1,0 +1,27 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-security-motion-001",
+  "source_agent": "home-assistant-adapter",
+  "event_type": "motion_detected",
+  "occurred_at": "2026-09-27T08:03:00.000Z",
+  "received_at": "2026-09-27T08:03:00.100Z",
+  "confidence": 1,
+  "needs_review": false,
+  "privacy_level": "family",
+  "trace_id": "trace-security-motion-001",
+  "source": {
+    "type": "motion_sensor",
+    "id": "binary_sensor.entry_motion"
+  },
+  "subject": {
+    "device_id": "binary_sensor.entry_motion"
+  },
+  "severity": "info",
+  "data_level": "L1",
+  "dedup_key": "binary_sensor.entry_motion:motion:2026-09-27T08:03Z",
+  "payload": {
+    "area": "entryway",
+    "detected": true,
+    "observed_for_ms": 500
+  }
+}

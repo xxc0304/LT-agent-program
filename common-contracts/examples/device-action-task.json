@@ -1,0 +1,33 @@
+{
+  "schema_version": "0.1",
+  "task_id": "task-energy-evt-001-light-study-desk-off",
+  "source": "energy-saving",
+  "source_agent": "energy-saving",
+  "target": "device-manager",
+  "target_agent": "device-manager",
+  "task_type": "device_action",
+  "status": "READY",
+  "target_ref": {
+    "device_id": "light.study_desk"
+  },
+  "action": "turn_off",
+  "parameters": {},
+  "priority": "P3",
+  "deadline_ms": 30000,
+  "data_level": "L0",
+  "privacy_level": "family",
+  "resource_requirement": {
+    "execution_mode": "local",
+    "capabilities": ["home_assistant", "device_control"]
+  },
+  "compute_requirement": {
+    "class": "switch",
+    "gpu_required": false
+  },
+  "idempotency_key": "energy:evt-001:light.study_desk:turn_off",
+  "trace_id": "trace-evt-001",
+  "metadata": {
+    "reason_code": "AREA_UNOCCUPIED",
+    "trigger_event_id": "evt-001"
+  }
+}

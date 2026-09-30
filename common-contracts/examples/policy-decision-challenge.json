@@ -1,0 +1,11 @@
+{
+  "schema_version": "0.1",
+  "decision_id": "task-unlock-001:policy",
+  "task_id": "task-unlock-001",
+  "trace_id": "trace-unlock-001",
+  "decision": "CHALLENGE",
+  "decided_at": "2026-09-29T00:00:00.000Z",
+  "reason_code": "HIGH_RISK_UNLOCK",
+  "reason_message": "开锁必须经过用户明确确认",
+  "confirmation_required": true
+}

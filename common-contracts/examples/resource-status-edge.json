@@ -1,0 +1,22 @@
+{
+  "schema_version": "0.1",
+  "node_id": "mock-edge-01",
+  "node_type": "edge",
+  "labels": ["home_local", "device_control"],
+  "observed_at": "2026-09-29T00:00:00.000Z",
+  "ttl_seconds": 15,
+  "online": true,
+  "resources": {
+    "cpu_percent": 20,
+    "memory_percent": 35,
+    "gpu_available": false,
+    "npu_available": false
+  },
+  "network": {
+    "rtt_to_cloud_ms": 0,
+    "bandwidth_mbps": null
+  },
+  "queue_depth": 0,
+  "supported_compute": ["switch", "smart_plug", "light", "climate", "curtain", "lock", "rule_engine"],
+  "data_zone": "home_local"
+}

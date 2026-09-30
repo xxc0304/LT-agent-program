@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { createDeepSeekVisionClient, SCB_LABELS } from "./vision.js";
+import { summarizeEvaluation } from "./evaluation-metrics.js";
 
 function parseArgs(argv) {
   const args = {};
@@ -28,7 +29,7 @@ async function readManifest(manifestPath) {
 function usage() {
   console.log(`用法：
   node src/evaluate-scb.js --image <图片路径>
-  node src/evaluate-scb.js --manifest <manifest.jsonl> [--limit 20] [--per-label 3] [--out results.json] [--dry-run]`);
+  node src/evaluate-scb.js --manifest <manifest.jsonl> [--limit 20] [--per-label 3] [--min-confidence 0.8] [--out results.json] [--dry-run]`);
 }
 
 async function main() {
@@ -58,6 +59,10 @@ async function main() {
     ? SCB_LABELS.flatMap((label) => allItems.filter((item) => item.label === label).slice(0, perLabel))
     : allItems;
   const limit = args.limit ? Number(args.limit) : selected.length;
+  const minConfidence = args["min-confidence"] === undefined ? 0 : Number(args["min-confidence"]);
+  if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+    throw new Error("--min-confidence 必须是 0 到 1 之间的数字。");
+  }
   const items = selected.slice(0, Number.isFinite(limit) ? limit : selected.length);
   const records = [];
   const client = args["dry-run"] ? null : await createDeepSeekVisionClient();
@@ -72,49 +77,42 @@ async function main() {
     };
     try {
       await fs.access(imagePath);
-      if (!args["dry-run"]) {
+    } catch (error) {
+      record.errorType = "INPUT_ERROR";
+      record.error = error instanceof Error ? error.message : String(error);
+      records.push(record);
+      continue;
+    }
+    if (!args["dry-run"]) {
+      try {
         const result = await client.analyzeImage(imagePath);
         record.predictedLabel = result.predictedLabel;
+        record.presence = result.presence;
         record.confidence = result.parsed?.confidence ?? null;
         record.evidence = result.parsed?.evidence ?? null;
         record.latencyMs = result.latencyMs;
         record.rawText = result.rawText;
+        const belowThreshold = minConfidence > 0
+          && (!Number.isFinite(record.confidence) || record.confidence < minConfidence);
+        record.acceptedLabel = belowThreshold ? null : record.predictedLabel;
+        if (belowThreshold) record.abstentionReason = "BELOW_MIN_CONFIDENCE";
+        else if (!SCB_LABELS.includes(record.predictedLabel)) record.abstentionReason = "INVALID_OR_MISSING_LABEL";
+      } catch (error) {
+        record.errorType = "API_ERROR";
+        record.error = error instanceof Error ? error.message : String(error);
       }
-    } catch (error) {
-      record.error = error instanceof Error ? error.message : String(error);
     }
     records.push(record);
   }
 
-  const usable = records.filter((record) => SCB_LABELS.includes(record.label));
-  const predicted = usable.filter((record) => SCB_LABELS.includes(record.predictedLabel));
-  const correct = predicted.filter((record) => record.label === record.predictedLabel).length;
-  const confusion = Object.fromEntries(SCB_LABELS.map((label) => [label, {}]));
-  for (const record of predicted) {
-    confusion[record.label][record.predictedLabel] = (confusion[record.label][record.predictedLabel] ?? 0) + 1;
-  }
-  const labelMetrics = Object.fromEntries(SCB_LABELS.map((label) => {
-    const truePositive = predicted.filter((record) => record.label === label && record.predictedLabel === label).length;
-    const falsePositive = predicted.filter((record) => record.label !== label && record.predictedLabel === label).length;
-    const falseNegative = predicted.filter((record) => record.label === label && record.predictedLabel !== label).length;
-    const support = predicted.filter((record) => record.label === label).length;
-    const precision = truePositive + falsePositive ? truePositive / (truePositive + falsePositive) : null;
-    const recall = truePositive + falseNegative ? truePositive / (truePositive + falseNegative) : null;
-    const f1 = precision !== null && recall !== null && precision + recall
-      ? (2 * precision * recall) / (precision + recall)
-      : null;
-    return [label, { support, precision, recall, f1 }];
-  }));
-  const latencies = predicted.map((record) => record.latencyMs).filter((value) => Number.isFinite(value));
+  const summary = args["dry-run"]
+    ? { notRun: true, reason: "dry-run 未调用模型，不计算模型表现指标" }
+    : summarizeEvaluation(records);
   const result = {
     dataset: "SCB-Dataset",
     model: process.env.DEEPSEEK_MODEL ?? "deepseek-v4-flash-vision-exp",
-    count: records.length,
-    evaluated: predicted.length,
-    accuracy: predicted.length ? correct / predicted.length : null,
-    confusion,
-    perLabelMetrics: labelMetrics,
-    meanLatencyMs: latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : null,
+    minConfidence,
+    ...summary,
     records,
   };
   if (args.out) {

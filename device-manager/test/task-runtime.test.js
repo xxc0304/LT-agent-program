@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDeviceTaskRuntime } from "../src/task-runtime.js";
+import { canonicalToLegacyTask, createDeviceTaskRuntime } from "../src/task-runtime.js";
 import { createDeviceToolRuntime } from "../src/tools.js";
 
 function task(overrides = {}) {
@@ -23,20 +23,23 @@ function task(overrides = {}) {
 
 function canonicalTask(overrides = {}) {
   return {
+    schema_version: "0.1",
     task_id: "task-canonical-001",
     scene: "home",
     task_type: "device_action",
-    source: "orchestrator",
-    target: "device_manager",
+    source_agent: "orchestrator",
+    target_agent: "device-manager",
     target_ref: { device_id: "switch.living_room_plug" },
     action: "turn_on",
     parameters: {},
     priority: "P2",
     deadline_ms: 500,
+    resource_requirement: { execution_mode: "local", capabilities: ["home_assistant", "device_control"] },
+    privacy_level: "family",
     data_level: "L0",
     compute_requirement: { class: "switch", gpu_required: false },
     idempotency_key: "task-canonical-001:turn_on",
-    status: "policy_pending",
+    status: "POLICY_PENDING",
     trace_id: "trace-canonical-001",
     policy_decision: { decision: "ALLOW", decision_id: "pd-canonical-001" },
     ...overrides,
@@ -116,6 +119,90 @@ test("canonical device_action 任务转换为设备动作并返回标准动作�
   assert.equal(receipt.result.action_result.status, "success");
   assert.equal(receipt.result.action_result.result.new_state, "on");
   assert.equal(receipt.result.action_result.result.verified, true);
+});
+
+test("P3/P4 映射到旧 low 时，标准动作回执仍保留原 canonical 优先级", async () => {
+  const deviceRuntime = createDeviceToolRuntime();
+  const runtime = createDeviceTaskRuntime(deviceRuntime);
+  const p3Task = canonicalTask({
+    task_id: "task-priority-p3",
+    priority: "P3",
+    idempotency_key: "priority-p3-key",
+    trace_id: "trace-priority-p3",
+    action: "turn_on",
+  });
+  const p4Task = canonicalTask({
+    task_id: "task-priority-p4",
+    priority: "P4",
+    idempotency_key: "priority-p4-key",
+    trace_id: "trace-priority-p4",
+    action: "turn_off",
+  });
+
+  assert.equal(canonicalToLegacyTask(p3Task).priority, "low");
+  assert.equal(canonicalToLegacyTask(p4Task).priority, "low");
+  const p3Receipt = await runtime.execute(p3Task);
+  const p4Receipt = await runtime.execute(p4Task);
+  assert.equal(p3Receipt.result.action_result.task_priority, "P3");
+  assert.equal(p4Receipt.result.action_result.task_priority, "P4");
+});
+
+test("canonical Task 校验必填资源和隐私字段，且适配时不混淆 resource 与 compute", async () => {
+  const deviceRuntime = createDeviceToolRuntime();
+  const runtime = createDeviceTaskRuntime(deviceRuntime);
+
+  const missingResource = canonicalTask();
+  delete missingResource.resource_requirement;
+  const invalidPrivacy = await runtime.execute(canonicalTask({ privacy_level: "public" }));
+  const missingSchemaVersion = canonicalTask();
+  delete missingSchemaVersion.schema_version;
+  const missingResourceReceipt = await runtime.execute(missingResource);
+  const missingVersionReceipt = await runtime.execute(missingSchemaVersion);
+
+  assert.equal(missingResourceReceipt.error.code, "INVALID_TASK");
+  assert.match(missingResourceReceipt.error.message, /resource_requirement/);
+  assert.equal(missingVersionReceipt.error.code, "INVALID_TASK");
+  assert.match(missingVersionReceipt.error.message, /schema_version/);
+  assert.equal(invalidPrivacy.error.code, "INVALID_TASK");
+  assert.match(invalidPrivacy.error.message, /privacy_level/);
+  assert.equal(deviceRuntime.homeAssistant.getAuditLog().length, 0);
+
+  const adapted = canonicalToLegacyTask(canonicalTask({
+    resource_requirement: { execution_mode: "edge", capabilities: ["ha-adapter"] },
+    compute_requirement: { class: "cloud", gpu_required: true },
+    privacy_level: "restricted",
+    data_level: "L0",
+  }));
+  assert.deepEqual(adapted.resource_requirement, { execution_mode: "edge", capabilities: ["ha-adapter"] });
+  assert.equal(adapted.privacy_level, "restricted");
+
+  const derivedRestriction = canonicalToLegacyTask(canonicalTask({
+    resource_requirement: { execution_mode: "local" },
+    privacy_level: "family",
+    data_level: "L3",
+  }));
+  assert.equal(derivedRestriction.privacy_level, "restricted");
+});
+
+test("canonical Task 兼容旧别名输入，并在规范字段与别名冲突时 fail closed", async () => {
+  const deviceRuntime = createDeviceToolRuntime();
+  const runtime = createDeviceTaskRuntime(deviceRuntime);
+  const legacyAliases = canonicalTask();
+  legacyAliases.source = legacyAliases.source_agent;
+  legacyAliases.target = legacyAliases.target_agent;
+  delete legacyAliases.source_agent;
+  delete legacyAliases.target_agent;
+
+  const compatible = await runtime.execute(legacyAliases);
+  assert.equal(compatible.status, "SUCCEEDED");
+
+  const sourceConflict = await runtime.execute(canonicalTask({ source: "different-agent" }));
+  const targetConflict = await runtime.execute(canonicalTask({ target: "security-agent" }));
+  assert.equal(sourceConflict.error.code, "INVALID_TASK");
+  assert.match(sourceConflict.error.message, /source_agent.*source/);
+  assert.equal(targetConflict.error.code, "INVALID_TASK");
+  assert.match(targetConflict.error.message, /target_agent.*target/);
+  assert.equal(deviceRuntime.homeAssistant.getAuditLog().length, 1);
 });
 
 test("canonical 任务使用幂等键避免重复控制", async () => {

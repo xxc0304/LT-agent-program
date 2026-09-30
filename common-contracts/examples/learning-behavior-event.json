@@ -1,0 +1,31 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-learning-classroom-001",
+  "source_agent": "learning-companion",
+  "event_type": "learning_behavior",
+  "occurred_at": "2026-09-27T08:00:00.000Z",
+  "received_at": "2026-09-27T08:00:01.000Z",
+  "confidence": 0.62,
+  "needs_review": true,
+  "privacy_level": "sensitive",
+  "trace_id": "trace-learning-classroom-001",
+  "source": {
+    "type": "vision_model",
+    "id": "classroom-scene-pilot"
+  },
+  "subject": {
+    "device_id": null
+  },
+  "severity": "info",
+  "data_level": "L3",
+  "dedup_key": "classroom-scene:2026-09-27T08:00:00Z",
+  "payload": {
+    "annotation_scope": "classroom_scene",
+    "target_child_specified": false,
+    "behavior": "unknown",
+    "presence": "unknown",
+    "duration_ms": 0,
+    "area": "classroom",
+    "review_reason": "课堂整体画面不能确定单个目标儿童身份或持续行为"
+  }
+}

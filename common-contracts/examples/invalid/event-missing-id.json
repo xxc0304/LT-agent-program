@@ -1,0 +1,8 @@
+{
+  "schema_version": "0.1",
+  "source_agent": "learning-companion",
+  "event_type": "learning_behavior",
+  "occurred_at": "2026-09-27T08:00:00.000Z",
+  "privacy_level": "sensitive",
+  "payload": {}
+}

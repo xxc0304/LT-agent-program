@@ -203,7 +203,7 @@ export class MockHomeAssistant {
     };
   }
 
-  runScene({ scene_id } = {}) {
+  runScene({ scene_id, planned_temperature_c, task_id = null, trace_id = null } = {}) {
     const scene = SCENES[scene_id];
     if (!scene) {
       return failure("SCENE_NOT_FOUND", `未找到场景：${scene_id}`, {
@@ -212,9 +212,18 @@ export class MockHomeAssistant {
       });
     }
 
+    const steps = clone(scene.steps);
+    const temperatureStep = steps.find((step) => step.action === "set_temperature");
+    if (planned_temperature_c !== undefined) {
+      if (!temperatureStep || !isFiniteNumber(planned_temperature_c)) {
+        return failure("INVALID_PARAMETER", "个性化温度只能用于包含温度步骤的场景，且必须为有效数值", { scene_id });
+      }
+      temperatureStep.parameters = { ...temperatureStep.parameters, temperature: planned_temperature_c };
+    }
+
     // Check every target before changing anything: an offline device must not
     // leave the household with only part of a scene executed.
-    const unavailable = scene.steps
+    const unavailable = steps
       .map((step) => this.devices.get(step.device_id))
       .find((device) => !device || !device.available);
     if (unavailable) {
@@ -224,12 +233,37 @@ export class MockHomeAssistant {
       });
     }
 
-    const executions = scene.steps.map((step) => ({
+    if (planned_temperature_c !== undefined) {
+      const climateDevice = this.devices.get(temperatureStep.device_id);
+      const { min_temperature, max_temperature } = climateDevice.attributes ?? {};
+      if (!isFiniteNumber(min_temperature) || !isFiniteNumber(max_temperature)) {
+        return failure("SCENE_PREFLIGHT_FAILED", "无法确认空调温控范围；个性化场景未执行", {
+          scene_id,
+          device_id: temperatureStep.device_id,
+          cause: "DEVICE_RANGE_UNKNOWN",
+        });
+      }
+      if (planned_temperature_c < min_temperature || planned_temperature_c > max_temperature) {
+        return failure("SCENE_PREFLIGHT_FAILED", "个性化温度超出空调当前允许范围；场景未执行", {
+          scene_id,
+          device_id: temperatureStep.device_id,
+          cause: "PREFERENCE_OUTSIDE_DEVICE_RANGE",
+          minimum_temperature_c: min_temperature,
+          maximum_temperature_c: max_temperature,
+        });
+      }
+    }
+
+    const executions = steps.map((step) => ({
       device_id: step.device_id,
       action: step.action,
-      result: this.controlDevice(step),
+      result: this.controlDevice({ ...step, task_id, trace_id }),
     }));
-    const verification = Object.entries(scene.expected).map(([device_id, expected]) => {
+    const expectedStates = clone(scene.expected);
+    if (planned_temperature_c !== undefined) {
+      expectedStates[temperatureStep.device_id].attributes.temperature = planned_temperature_c;
+    }
+    const verification = Object.entries(expectedStates).map(([device_id, expected]) => {
       const result = this.getState({ device_id });
       const device = result.device;
       const verified = result.success && verifyExpectedState(device, expected);
@@ -241,6 +275,9 @@ export class MockHomeAssistant {
         && verification.every((entry) => entry.verified),
       scene_id,
       scene_name: scene.name,
+      ...(planned_temperature_c !== undefined ? { planned_temperature_c } : {}),
+      ...(task_id ? { task_id } : {}),
+      ...(trace_id ? { trace_id } : {}),
       executions,
       verification,
       verification_required: false,

@@ -3,17 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "家庭微脑设备管家 Agent 的 Home Assistant 适配与基础设备工具",
+  "description": "家庭微脑设备管家 Agent 的 Home Assistant 适配、基础设备工具和多 Agent 事件调度桥接",
   "scripts": {
     "demo": "node src/demo.js",
     "demo:plug": "node src/plug-demo.js",
     "demo:orchestration": "node src/orchestrator-demo.js",
+    "demo:interface-faults": "node src/interface-fault-demo.js",
+    "demo:agent-event": "node src/agent-event-demo.js",
     "acceptance": "node src/acceptance.js",
     "ha:check": "node src/check-ha.js",
     "test": "node --test",
     "plugin:validate": "openclaw plugins validate --root . --entry ./src/openclaw-plugin.js",
+    "contracts:test": "node --test ..\\common-contracts\\test\\task-compat.test.mjs",
     "contracts:validate": "node ..\\common-contracts\\validate-examples.mjs",
-    "verify": "npm test && npm run acceptance && npm run plugin:validate && npm run contracts:validate"
+    "verify": "npm test && npm run acceptance && npm run plugin:validate && npm run contracts:test && npm run contracts:validate"
   },
   "engines": {
     "node": ">=20"

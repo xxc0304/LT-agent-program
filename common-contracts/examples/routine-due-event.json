@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-routine-reminder-memory-001-2026-09-30",
+  "source_agent": "household-memory",
+  "event_type": "routine_due",
+  "occurred_at": "2026-09-30T14:30:00.000Z",
+  "privacy_level": "family",
+  "trace_id": "trace-routine-reminder-memory-001-2026-09-30",
+  "data_level": "L0",
+  "dedup_key": "routine-reminder:memory-001:2026-09-30",
+  "payload": {
+    "routine_type": "sleep_time",
+    "local_date": "2026-09-30",
+    "local_time": "22:30",
+    "day_type": "weekday",
+    "time_zone": "Asia/Shanghai",
+    "preference_memory_id": "memory-001",
+    "proposed_action": "notify_user",
+    "requires_user_confirmation_before_device_action": true
+  }
+}

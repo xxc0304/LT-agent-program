@@ -1,0 +1,29 @@
+{
+  "schema_version": "0.1",
+  "event_id": "evt-security-stranger-001",
+  "source_agent": "edge-vision-adapter",
+  "event_type": "stranger_suspected",
+  "occurred_at": "2026-09-27T08:05:00.000Z",
+  "received_at": "2026-09-27T08:05:00.200Z",
+  "confidence": 0.58,
+  "needs_review": true,
+  "privacy_level": "restricted",
+  "trace_id": "trace-security-stranger-001",
+  "source": {
+    "type": "edge_model",
+    "id": "person-detection-mock"
+  },
+  "subject": {
+    "device_id": "camera.entryway"
+  },
+  "severity": "warning",
+  "data_level": "L3",
+  "dedup_key": "camera.entryway:stranger_suspected:2026-09-27T08:05Z",
+  "payload": {
+    "area": "entryway",
+    "identity_known": false,
+    "person_count": 1,
+    "media_attached": false,
+    "review_reason": "仅为模拟的低置信度事件，不代表已确认身份或入侵"
+  }
+}

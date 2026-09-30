@@ -4,14 +4,18 @@
   "title": "家庭微脑任务",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "task_id", "source_agent", "target_agent", "task_type", "priority", "deadline_ms", "resource_requirement", "privacy_level", "payload"],
+  "required": ["schema_version", "task_id", "priority", "deadline_ms"],
   "properties": {
     "schema_version": { "type": "string", "const": "0.1" },
     "task_id": { "type": "string", "minLength": 1 },
     "source_agent": { "type": "string", "minLength": 1 },
     "target_agent": { "type": "string", "minLength": 1 },
-    "task_type": { "enum": ["control_device", "get_state", "run_scene", "diagnose_device"] },
-    "priority": { "enum": ["low", "normal", "high", "critical"] },
+    "source": { "type": "string", "minLength": 1, "description": "兼容别名；若 source_agent 同时存在，值必须完全一致。" },
+    "target": { "type": "string", "minLength": 1, "description": "兼容别名；若 target_agent 同时存在，值必须完全一致。" },
+    "task_type": { "enum": ["control_device", "get_state", "run_scene", "diagnose_device", "device_action"] },
+    "status": { "enum": ["CREATED", "POLICY_PENDING", "READY", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"] },
+    "scene": { "type": "string", "minLength": 1 },
+    "priority": { "enum": ["P0", "P1", "P2", "P3", "P4", "low", "normal", "high", "critical"] },
     "deadline_ms": { "type": "integer", "minimum": 0 },
     "resource_requirement": {
       "type": "object",
@@ -23,7 +27,55 @@
       }
     },
     "privacy_level": { "enum": ["family", "sensitive", "restricted"] },
+    "data_level": { "enum": ["L0", "L1", "L2", "L3"] },
     "trace_id": { "type": "string" },
-    "payload": { "type": "object" }
-  }
+    "idempotency_key": { "type": "string", "minLength": 1 },
+    "target_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_id"],
+      "properties": { "device_id": { "type": "string", "minLength": 1 } }
+    },
+    "action": { "type": "string", "minLength": 1 },
+    "parameters": { "type": "object" },
+    "payload": { "type": "object" },
+    "compute_requirement": { "type": "object" },
+    "metadata": { "type": "object" },
+    "policy_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "decision_id", "task_id", "trace_id", "decision", "decided_at", "reason_code", "reason_message", "confirmation_required"],
+      "properties": {
+        "schema_version": { "type": "string", "const": "0.1" },
+        "decision_id": { "type": "string", "minLength": 1 },
+        "task_id": { "type": "string", "minLength": 1 },
+        "trace_id": { "type": "string", "minLength": 1 },
+        "decision": { "enum": ["ALLOW", "DENY", "CHALLENGE"] },
+        "decided_at": { "type": "string", "format": "date-time" },
+        "reason_code": { "type": "string", "minLength": 1 },
+        "reason_message": { "type": "string", "minLength": 1 },
+        "confirmation_required": { "type": "boolean" },
+        "required_confirmation": { "type": "string", "minLength": 1 },
+        "policy_agent": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Legacy device-manager Task",
+      "required": ["source_agent", "target_agent", "task_type", "priority", "deadline_ms", "resource_requirement", "privacy_level", "payload"],
+      "properties": {
+        "task_type": { "enum": ["control_device", "get_state", "run_scene", "diagnose_device"] },
+        "priority": { "enum": ["low", "normal", "high", "critical"] }
+      }
+    },
+    {
+      "title": "Canonical device_action Task",
+      "required": ["source_agent", "target_agent", "task_type", "target_ref", "action", "priority", "deadline_ms", "resource_requirement", "privacy_level", "data_level", "idempotency_key", "trace_id"],
+      "properties": {
+        "task_type": { "const": "device_action" },
+        "priority": { "enum": ["P0", "P1", "P2", "P3", "P4"] }
+      }
+    }
+  ]
 }

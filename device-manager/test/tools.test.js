@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { MockHomeAssistant } from "../src/mock-ha.js";
+import { HOUSEHOLD_MEMORY_TOOL_DEFINITIONS } from "../src/memory-tools.js";
+import { ORCHESTRATOR_TOOL_DEFINITIONS } from "../src/orchestrator-tools.js";
+import { SCENE_PLANNING_TOOL_DEFINITIONS } from "../src/scene-planning-tools.js";
 import { createDeviceToolRuntime, DEVICE_TOOL_DEFINITIONS } from "../src/tools.js";
 
 test("暴露六个设备工具（含事件查询）", () => {
@@ -12,14 +15,16 @@ test("暴露六个设备工具（含事件查询）", () => {
   );
 });
 
-test("OpenClaw manifest 声明相同的六个工具", () => {
+test("OpenClaw manifest 声明设备工具和调度工具", () => {
   const manifestUrl = new URL("../openclaw.plugin.json", import.meta.url);
   const manifest = JSON.parse(readFileSync(manifestUrl, "utf8"));
 
-  assert.deepEqual(
-    manifest.contracts.tools,
-    DEVICE_TOOL_DEFINITIONS.map((tool) => tool.name),
-  );
+  assert.deepEqual(manifest.contracts.tools, [
+    ...DEVICE_TOOL_DEFINITIONS,
+    ...ORCHESTRATOR_TOOL_DEFINITIONS,
+    ...HOUSEHOLD_MEMORY_TOOL_DEFINITIONS,
+    ...SCENE_PLANNING_TOOL_DEFINITIONS,
+  ].map((tool) => tool.name));
 });
 
 test("列出全部模拟设备", () => {
@@ -282,6 +287,27 @@ test("场景预检发现离线设备时不执行任何部分动作", () => {
   assert.equal(runtime.invoke("get_state", { device_id: "light.living_room" }).device.state, "on");
   assert.equal(runtime.invoke("get_state", { device_id: "cover.living_room_curtain" }).device.state, "open");
   assert.equal(runtime.homeAssistant.getAuditLog().length, 2);
+});
+
+test("个性化温度执行前重新检查设备范围，越界时整场景不执行", () => {
+  const runtime = createDeviceToolRuntime();
+  const climate = runtime.homeAssistant.devices.get("climate.bedroom");
+  climate.attributes.min_temperature = 25;
+  climate.attributes.max_temperature = 30;
+
+  const result = runtime.invoke("run_scene", {
+    scene_id: "sleep",
+    planned_temperature_c: 24,
+    task_id: "plan-range-001",
+    trace_id: "plan-range-001",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "SCENE_PREFLIGHT_FAILED");
+  assert.equal(result.error.cause, "PREFERENCE_OUTSIDE_DEVICE_RANGE");
+  assert.equal(runtime.invoke("get_state", { device_id: "light.living_room" }).device.state, "off");
+  assert.equal(runtime.invoke("get_state", { device_id: "climate.bedroom" }).device.attributes.temperature, 26);
+  assert.equal(runtime.homeAssistant.getAuditLog().length, 0);
 });
 
 test("未知场景返回明确错误，场景不包含开锁", () => {

@@ -1,4 +1,5 @@
 import { createDeviceToolRuntime } from "./tools.js";
+import { normalizeTaskAliases } from "../../common-contracts/task-compat.mjs";
 
 const CONTRACT_VERSION = "0.1";
 const ACTION_RESULT_VERSION = "1.0";
@@ -8,6 +9,7 @@ const PRIORITIES = new Set(["low", "normal", "high", "critical"]);
 const PRIVACY_LEVELS = new Set(["family", "sensitive", "restricted"]);
 const CANONICAL_PRIORITIES = new Set(["P0", "P1", "P2", "P3", "P4"]);
 const DATA_LEVELS = new Set(["L0", "L1", "L2", "L3"]);
+const PRIVACY_RANK = Object.freeze({ family: 0, sensitive: 1, restricted: 2 });
 
 function now() {
   return new Date().toISOString();
@@ -63,23 +65,38 @@ function isCanonicalTask(task) {
 
 function validateCanonicalTask(task) {
   if (!task || typeof task !== "object" || Array.isArray(task)) return "任务必须是 JSON 对象";
-  const required = ["task_id", "target", "target_ref", "action", "priority", "deadline_ms", "data_level", "idempotency_key", "trace_id"];
+  const required = ["schema_version", "task_id", "source_agent", "target_agent", "target_ref", "action", "priority", "deadline_ms", "resource_requirement", "privacy_level", "data_level", "idempotency_key", "trace_id"];
   const missing = required.find((field) => task[field] === undefined);
   if (missing) return `缺少必填字段：${missing}`;
+  if (task.schema_version !== CONTRACT_VERSION) return `不支持的 schema_version：${task.schema_version}`;
   if (task.task_type !== "device_action") return "canonical Task 的 task_type 必须是 device_action";
-  if (![TARGET_AGENT, "device_manager"].includes(task.target)) return "target 必须是 device-manager";
-  if (!task.target_ref || typeof task.target_ref !== "object" || typeof task.target_ref.device_id !== "string") {
+  if (typeof task.source_agent !== "string" || !task.source_agent.trim()) return "source_agent 必须是非空字符串";
+  if (task.target_agent !== TARGET_AGENT) return `target_agent 必须是 ${TARGET_AGENT}`;
+  if (!task.target_ref || typeof task.target_ref !== "object" || Array.isArray(task.target_ref)
+    || typeof task.target_ref.device_id !== "string" || !task.target_ref.device_id.trim()) {
     return "target_ref.device_id 必须是非空字符串";
   }
-  if (typeof task.action !== "string" || !task.action) return "action 必须是非空字符串";
+  if (typeof task.action !== "string" || !task.action.trim()) return "action 必须是非空字符串";
   if (task.parameters !== undefined && (!task.parameters || typeof task.parameters !== "object" || Array.isArray(task.parameters))) {
     return "parameters 必须是 JSON 对象";
   }
   if (!CANONICAL_PRIORITIES.has(task.priority)) return `不支持的 priority：${task.priority}`;
   if (!Number.isInteger(task.deadline_ms) || task.deadline_ms < 0) return "deadline_ms 必须是非负整数";
   if (!DATA_LEVELS.has(task.data_level)) return `不支持的 data_level：${task.data_level}`;
-  if (typeof task.idempotency_key !== "string" || !task.idempotency_key) return "idempotency_key 必须是非空字符串";
-  if (typeof task.trace_id !== "string" || !task.trace_id) return "trace_id 必须是非空字符串";
+  if (!PRIVACY_LEVELS.has(task.privacy_level)) return `不支持的 privacy_level：${task.privacy_level}`;
+  if (!task.resource_requirement || typeof task.resource_requirement !== "object" || Array.isArray(task.resource_requirement)) {
+    return "resource_requirement 必须是 JSON 对象";
+  }
+  if (!["local", "edge", "cloud"].includes(task.resource_requirement.execution_mode)) {
+    return "resource_requirement.execution_mode 不合法";
+  }
+  if (task.resource_requirement.capabilities !== undefined
+    && (!Array.isArray(task.resource_requirement.capabilities)
+      || task.resource_requirement.capabilities.some((capability) => typeof capability !== "string"))) {
+    return "resource_requirement.capabilities 必须是字符串数组";
+  }
+  if (typeof task.idempotency_key !== "string" || !task.idempotency_key.trim()) return "idempotency_key 必须是非空字符串";
+  if (typeof task.trace_id !== "string" || !task.trace_id.trim()) return "trace_id 必须是非空字符串";
   if (task.policy_decision && !["ALLOW", "DENY", "CHALLENGE"].includes(task.policy_decision.decision)) {
     return "policy_decision.decision 必须是 ALLOW、DENY 或 CHALLENGE";
   }
@@ -94,22 +111,26 @@ function dataLevelToPrivacy(level) {
   return { L0: "family", L1: "family", L2: "sensitive", L3: "restricted" }[level];
 }
 
-function canonicalToLegacyTask(task) {
-  const source = typeof task.source === "string" ? task.source : task.source?.id;
+function legacyPrivacyForCanonicalTask(task) {
+  const derived = dataLevelToPrivacy(task.data_level);
+  return PRIVACY_RANK[task.privacy_level] >= PRIVACY_RANK[derived] ? task.privacy_level : derived;
+}
+
+export function canonicalToLegacyTask(task) {
   const decisionAllows = task.policy_decision?.decision === "ALLOW";
   return {
     schema_version: CONTRACT_VERSION,
     task_id: task.task_id,
-    source_agent: source || "canonical-orchestrator",
+    source_agent: task.source_agent,
     target_agent: TARGET_AGENT,
     task_type: "control_device",
     priority: canonicalPriorityToLegacy(task.priority),
     deadline_ms: task.deadline_ms,
     resource_requirement: {
-      execution_mode: task.compute_requirement?.class === "cloud" ? "cloud" : "local",
-      capabilities: task.compute_requirement?.class ? [task.compute_requirement.class] : [],
+      execution_mode: task.resource_requirement.execution_mode,
+      capabilities: task.resource_requirement.capabilities ?? [],
     },
-    privacy_level: dataLevelToPrivacy(task.data_level),
+    privacy_level: legacyPrivacyForCanonicalTask(task),
     trace_id: task.trace_id,
     payload: {
       device_id: task.target_ref.device_id,
@@ -163,6 +184,7 @@ function withCanonicalActionResult(receipt, task) {
         schema_version: ACTION_RESULT_VERSION,
         action_id: `${task.task_id}:action`,
         task_id: task.task_id,
+        task_priority: task.priority,
         policy_decision_id: task.policy_decision?.decision_id ?? task.policy_decision_id ?? null,
         trace_id: task.trace_id,
         idempotency_key: task.idempotency_key,
@@ -241,8 +263,10 @@ export function createDeviceTaskRuntime(deviceRuntime = createDeviceToolRuntime(
 
   async function executeCanonical(task) {
     const startedAt = Date.now();
-    const validationError = validateCanonicalTask(task);
+    const normalized = normalizeTaskAliases(task, { requireSource: true });
+    const validationError = normalized.error ?? validateCanonicalTask(normalized.task);
     if (validationError) return errorReceipt(task, "FAILED", "INVALID_TASK", validationError, startedAt);
+    task = normalized.task;
 
     const policyError = policyFailure(task, startedAt);
     if (policyError) return policyError;

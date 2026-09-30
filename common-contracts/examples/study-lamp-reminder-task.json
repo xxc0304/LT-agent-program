@@ -1,0 +1,32 @@
+{
+  "schema_version": "0.1",
+  "task_id": "task-study-session-001-lamp-reminder",
+  "source": "learning-companion",
+  "source_agent": "learning-companion",
+  "target": "device-manager",
+  "target_agent": "device-manager",
+  "task_type": "device_action",
+  "status": "CREATED",
+  "target_ref": {
+    "device_id": "light.study_desk"
+  },
+  "action": "turn_on",
+  "parameters": {
+    "brightness_pct": 50
+  },
+  "priority": "P3",
+  "deadline_ms": 30000,
+  "data_level": "L2",
+  "privacy_level": "sensitive",
+  "resource_requirement": {
+    "execution_mode": "local",
+    "capabilities": ["home_assistant", "device_control"]
+  },
+  "idempotency_key": "study-session-local-001:lamp-reminder",
+  "trace_id": "trace-study-session-001",
+  "metadata": {
+    "reason_code": "USER_REQUESTED_STUDY_SESSION_REMINDER",
+    "execution_requires_user_authorization": true,
+    "example_only": true
+  }
+}

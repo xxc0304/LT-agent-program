@@ -1,0 +1,8 @@
+{
+  "schema_version": "0.1",
+  "device_id": "light.invalid",
+  "name": "缺少可用状态的模拟设备",
+  "domain": "light",
+  "state": "off",
+  "attributes": {}
+}

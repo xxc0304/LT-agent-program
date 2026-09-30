@@ -373,7 +373,7 @@ export class RealHomeAssistant {
     };
   }
 
-  async runScene({ scene_id } = {}) {
+  async runScene({ scene_id, planned_temperature_c, task_id = null, trace_id = null } = {}) {
     const scene = SCENES[scene_id];
     if (!scene) {
       return failure("SCENE_NOT_FOUND", `未找到场景：${scene_id}`, {
@@ -382,7 +382,17 @@ export class RealHomeAssistant {
       });
     }
 
-    const targetIds = [...new Set(scene.steps.map((step) => step.device_id))];
+    const steps = clone(scene.steps);
+    const temperatureStep = steps.find((step) => step.action === "set_temperature");
+    if (planned_temperature_c !== undefined) {
+      if (!temperatureStep || !Number.isFinite(planned_temperature_c)) {
+        return failure("INVALID_PARAMETER", "个性化温度只能用于包含温度步骤的场景，且必须为有效数值", { scene_id });
+      }
+      temperatureStep.parameters = { ...temperatureStep.parameters, temperature: planned_temperature_c };
+    }
+
+    const targetIds = [...new Set(steps.map((step) => step.device_id))];
+    const preflightStates = new Map();
     for (const device_id of targetIds) {
       const state = await this.getState({ device_id });
       if (!state.success || !state.device.available) {
@@ -392,17 +402,43 @@ export class RealHomeAssistant {
           cause: state.success ? "DEVICE_UNAVAILABLE" : state.error.code,
         });
       }
+      preflightStates.set(device_id, state.device);
+    }
+
+    if (planned_temperature_c !== undefined) {
+      const climateDevice = preflightStates.get(temperatureStep.device_id);
+      const min = climateDevice?.attributes?.min_temperature;
+      const max = climateDevice?.attributes?.max_temperature;
+      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+        return failure("SCENE_PREFLIGHT_FAILED", "无法确认空调温控范围；个性化场景未执行", {
+          scene_id,
+          device_id: temperatureStep.device_id,
+          cause: "DEVICE_RANGE_UNKNOWN",
+        });
+      }
+      if (planned_temperature_c < min || planned_temperature_c > max) {
+        return failure("SCENE_PREFLIGHT_FAILED", "个性化温度超出空调当前允许范围；场景未执行", {
+          scene_id,
+          device_id: temperatureStep.device_id,
+          cause: "PREFERENCE_OUTSIDE_DEVICE_RANGE",
+          minimum_temperature_c: min,
+          maximum_temperature_c: max,
+        });
+      }
     }
 
     const executions = [];
-    for (const step of scene.steps) {
-      const result = await this.controlDevice(step);
+    for (const step of steps) {
+      const result = await this.controlDevice({ ...step, task_id, trace_id });
       executions.push({ device_id: step.device_id, action: step.action, result });
       if (!result.success) {
         return {
           success: false,
           scene_id,
           scene_name: scene.name,
+          ...(planned_temperature_c !== undefined ? { planned_temperature_c } : {}),
+          ...(task_id ? { task_id } : {}),
+          ...(trace_id ? { trace_id } : {}),
           executions,
           verification: [],
           error: result.error,
@@ -410,8 +446,12 @@ export class RealHomeAssistant {
       }
     }
 
+    const expectedStates = clone(scene.expected);
+    if (planned_temperature_c !== undefined) {
+      expectedStates[temperatureStep.device_id].attributes.temperature = planned_temperature_c;
+    }
     const verification = [];
-    for (const [device_id, expected] of Object.entries(scene.expected)) {
+    for (const [device_id, expected] of Object.entries(expectedStates)) {
       const result = await this.getState({ device_id });
       verification.push({
         device_id,
@@ -425,6 +465,9 @@ export class RealHomeAssistant {
       success: verification.every((entry) => entry.verified),
       scene_id,
       scene_name: scene.name,
+      ...(planned_temperature_c !== undefined ? { planned_temperature_c } : {}),
+      ...(task_id ? { task_id } : {}),
+      ...(trace_id ? { trace_id } : {}),
       executions,
       verification,
       verification_required: false,

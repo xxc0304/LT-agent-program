@@ -1,16 +1,38 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lt-agent-program.local/contracts/resource-status.schema.json",
-  "title": "家庭微脑资源状态",
+  "title": "家庭微脑执行节点资源状态（草案）",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "resource_id", "status", "observed_at"],
+  "required": ["schema_version", "node_id", "observed_at", "online", "supported_compute", "data_zone"],
   "properties": {
     "schema_version": { "type": "string", "const": "0.1" },
-    "resource_id": { "type": "string", "minLength": 1 },
-    "status": { "enum": ["AVAILABLE", "BUSY", "OFFLINE", "DEGRADED"] },
+    "node_id": { "type": "string", "minLength": 1 },
+    "node_type": { "enum": ["local", "edge", "cloud"] },
+    "labels": { "type": "array", "items": { "type": "string", "minLength": 1 } },
     "observed_at": { "type": "string", "format": "date-time" },
-    "capacity": { "type": "number", "minimum": 0 },
-    "metadata": { "type": "object" }
+    "ttl_seconds": { "type": "integer", "minimum": 0 },
+    "online": { "type": "boolean" },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpu_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "memory_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "gpu_available": { "type": "boolean" },
+        "npu_available": { "type": "boolean" }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rtt_to_cloud_ms": { "type": "number", "minimum": 0 },
+        "bandwidth_mbps": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "queue_depth": { "type": "integer", "minimum": 0 },
+    "supported_compute": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "data_zone": { "type": "string", "minLength": 1 }
   }
 }

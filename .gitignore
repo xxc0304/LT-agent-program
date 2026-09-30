@@ -21,3 +21,16 @@ credentials.json
 learning-behavior/data/scb/raw/
 learning-behavior/data/scb/images/
 learning-behavior/data/scb/results/
+learning-behavior/data/scb/blind-review/
+learning-behavior/outputs/2026-09-26-annotation-review/
+
+# Local-only household preference memory; never commit personal routines/preferences
+**/family-memory*.json
+**/family-memory*.json.lock
+**/family-memory*.json.*.tmp
+**/family-memory*.json.*.backup
+**/memory-data/
+
+# Runtime conversation/memory snapshots are local data, not agent source or fixtures
+/device-manager/agent-workspace/memory/.dreams/
+/device-manager/agent-workspace/memory/dreaming/

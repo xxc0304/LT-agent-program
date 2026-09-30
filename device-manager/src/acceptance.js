@@ -1,4 +1,5 @@
 import { createDeviceToolRuntime } from "./tools.js";
+import { createScenePlanningTools } from "./scene-planning-tools.js";
 
 const runtime = createDeviceToolRuntime();
 const checks = [];
@@ -49,6 +50,47 @@ check("回家场景逐项验证", isVerified(scene), {
   scene_id: "home",
   verified_steps: scene.verification?.filter((entry) => entry.verified).length ?? 0,
   total_steps: scene.verification?.length ?? 0,
+});
+
+const scenePlanner = createScenePlanningTools({
+  deviceRuntime: runtime,
+  getHouseholdPreference: async () => ({
+    memory_type: "comfort_temperature_c",
+    value: 24,
+    room_id: "bedroom",
+    status: "confirmed",
+  }),
+});
+const personalizedPlan = await scenePlanner.plan_scene({ scene_id: "sleep" });
+const temperatureBeforeConfirmation = runtime.invoke("get_state", { device_id: "climate.bedroom" });
+const auditBeforeConfirmation = runtime.homeAssistant.getAuditLog().length;
+const rejectedSceneExecution = await scenePlanner.execute_scene_plan({
+  plan_id: personalizedPlan.plan_id,
+  confirmation_phrase: "确认执行方案 wrong-plan-id",
+});
+const stateAfterRejectedConfirmation = runtime.invoke("get_state", { device_id: "climate.bedroom" });
+const auditAfterRejectedConfirmation = runtime.homeAssistant.getAuditLog().length;
+const confirmedSceneExecution = await scenePlanner.execute_scene_plan({
+  plan_id: personalizedPlan.plan_id,
+  confirmation_phrase: personalizedPlan.confirmation_phrase,
+});
+const temperatureAfterConfirmation = runtime.invoke("get_state", { device_id: "climate.bedroom" });
+check("个性化场景先确认、后执行并回读", personalizedPlan.success === true
+  && personalizedPlan.steps.find((step) => step.action === "set_temperature")?.parameters.temperature === 24
+  && temperatureBeforeConfirmation.device?.attributes.temperature === 26
+  && rejectedSceneExecution.error?.code === "CONFIRMATION_REQUIRED"
+  && stateAfterRejectedConfirmation.device?.attributes.temperature === 26
+  && auditAfterRejectedConfirmation === auditBeforeConfirmation
+  && confirmedSceneExecution.success === true
+  && confirmedSceneExecution.confirmation_verified === true
+  && confirmedSceneExecution.verification?.every((entry) => entry.verified)
+  && temperatureAfterConfirmation.device?.attributes.temperature === 24, {
+  preview_temperature_c: personalizedPlan.steps.find((step) => step.action === "set_temperature")?.parameters.temperature,
+  temperature_before_confirmation_c: temperatureBeforeConfirmation.device?.attributes.temperature,
+  rejected_confirmation_code: rejectedSceneExecution.error?.code,
+  temperature_after_confirmation_c: temperatureAfterConfirmation.device?.attributes.temperature,
+  verified_steps: confirmedSceneExecution.verification?.filter((entry) => entry.verified).length ?? 0,
+  total_steps: confirmedSceneExecution.verification?.length ?? 0,
 });
 
 const lockBefore = runtime.invoke("get_state", { device_id: "lock.front_door" });

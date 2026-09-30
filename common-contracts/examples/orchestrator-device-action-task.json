@@ -1,0 +1,30 @@
+{
+  "schema_version": "0.1",
+  "task_id": "task-orchestrator-001",
+  "scene": "device-control",
+  "task_type": "device_action",
+  "source": "mock-orchestrator",
+  "source_agent": "mock-orchestrator",
+  "target": "device-manager",
+  "target_agent": "device-manager",
+  "status": "POLICY_PENDING",
+  "target_ref": {
+    "device_id": "switch.living_room_plug"
+  },
+  "action": "turn_on",
+  "parameters": {},
+  "priority": "P2",
+  "deadline_ms": 500,
+  "data_level": "L0",
+  "privacy_level": "family",
+  "resource_requirement": {
+    "execution_mode": "local",
+    "capabilities": ["switch"]
+  },
+  "compute_requirement": {
+    "class": "switch",
+    "gpu_required": false
+  },
+  "idempotency_key": "task-orchestrator-001:turn_on",
+  "trace_id": "trace-orchestrator-001"
+}

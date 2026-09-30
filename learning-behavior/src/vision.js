@@ -11,6 +11,8 @@ export const SCB_LABELS = [
   "discussing",
 ];
 
+export const SCB_PRESENCE_STATES = ["at_desk", "away_from_desk", "unknown"];
+
 const MIME_TYPES = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -22,9 +24,10 @@ export function buildVisionPrompt() {
   return [
     "你是课堂学习行为识别器。请只根据图片中可见证据判断行为，不要推测图片之外的事实。",
     `从以下标签中选择一个主要行为：${SCB_LABELS.join(", ")}。`,
+    "同时判断孩子是否仍在书桌/学习区域：at_desk、away_from_desk 或 unknown。单张图片无法确认时必须选择 unknown。",
     "turning_around 只表示转身或回头，不要直接写成‘走神’。",
     "只返回一个合法 JSON 对象，不要返回 Markdown 或解释文字：",
-    '{"behavior":"reading","confidence":0.0,"evidence":"简短可见证据"}',
+    '{"behavior":"reading","presence":"at_desk","confidence":0.0,"evidence":"简短可见证据"}',
     "confidence 必须是 0 到 1 之间的小数。",
   ].join("\n");
 }
@@ -54,6 +57,12 @@ export function pickBehavior(parsed) {
   if (!parsed || typeof parsed !== "object") return null;
   const candidate = parsed.behavior ?? parsed.label ?? parsed.predicted_label;
   return SCB_LABELS.includes(candidate) ? candidate : null;
+}
+
+export function pickPresence(parsed) {
+  if (!parsed || typeof parsed !== "object") return null;
+  const candidate = parsed.presence ?? parsed.presence_state;
+  return SCB_PRESENCE_STATES.includes(candidate) ? candidate : null;
 }
 
 export async function createDeepSeekVisionClient({
@@ -110,6 +119,7 @@ export async function createDeepSeekVisionClient({
         rawText: text,
         parsed,
         predictedLabel: pickBehavior(parsed),
+        presence: pickPresence(parsed),
         latencyMs: Date.now() - startedAt,
         usage: payload.usage ?? null,
       };

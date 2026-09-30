@@ -1,0 +1,15 @@
+{
+  "name": "lt-household-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "家庭边缘端偏好记忆 MVP：显式偏好、待确认推测、查询与删除",
+  "scripts": {
+    "demo": "node src/demo-routine-workflow.js",
+    "backup": "node src/backup-cli.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

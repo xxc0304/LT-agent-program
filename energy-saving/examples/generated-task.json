@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.1",
+  "task_id": "task-evt-occupancy-001-light-living_room-turn_off",
+  "source": "energy-saving",
+  "source_agent": "energy-saving",
+  "target": "device-manager",
+  "target_agent": "device-manager",
+  "task_type": "device_action",
+  "target_ref": {
+    "device_id": "light.living_room"
+  },
+  "action": "turn_off",
+  "parameters": {},
+  "priority": "P3",
+  "deadline_ms": 30000,
+  "data_level": "L0",
+  "privacy_level": "family",
+  "resource_requirement": {
+    "execution_mode": "local",
+    "capabilities": ["home_assistant", "device_control"]
+  },
+  "compute_requirement": {
+    "class": "switch",
+    "gpu_required": false
+  },
+  "idempotency_key": "energy:evt-occupancy-001:light.living_room:turn_off",
+  "trace_id": "trace-energy-001"
+}
