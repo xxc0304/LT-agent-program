@@ -51,7 +51,7 @@ Task 旧字段别名、优先级和数据级别的本地兼容规则见 [`TASK_C
 node common-contracts/validate-examples.mjs
 ```
 
-当前校验覆盖 Device、ResourceStatus、PolicyDecision、旧/新版 Task、TaskReceipt、学习、安全及作息到期事件等 **18 个有效样例**，并确认 **4 个无效样例（缺字段或别名冲突）会被拒绝**。校验器无第三方依赖，仅实现本仓库 Schema 当前使用的 JSON Schema 关键字子集，并对 Task 别名一致性做额外语义校验；若 Schema 引入新关键字，需同步扩展校验器或换用完整 JSON Schema 实现。
+当前校验覆盖 Device、ResourceStatus、PolicyDecision、旧/新版 Task、TaskReceipt、学习、安全及作息到期事件等 **17 个有效样例**，并确认 **4 个无效样例（缺字段或别名冲突）会被拒绝**。校验器无第三方依赖，仅实现本仓库 Schema 当前使用的 JSON Schema 关键字子集，并对 Task 别名一致性做额外语义校验；若 Schema 引入新关键字，需同步扩展校验器或换用完整 JSON Schema 实现。
 
 设备管家任务入口测试：
 

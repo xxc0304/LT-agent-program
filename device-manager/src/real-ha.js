@@ -2,6 +2,10 @@ import { SCENES, verifyExpectedState } from "./scenes.js";
 import { isActionSatisfied } from "./action-verification.js";
 import { toCanonicalDevice } from "./canonical.js";
 import { DeviceEventLedger } from "./events.js";
+import { getDeviceActionConfirmationPolicy } from "./action-confirmation-policy.js";
+import { enrichEntitiesWithRegistries } from "./home-assistant-registry.js";
+import { HomeAssistantStateMonitor } from "./home-assistant-state-monitor.js";
+import { discoverHomeAssistantCapabilities, getExplicitlyUnsupportedAction } from "./ha-capabilities.js";
 
 const SUPPORTED_DOMAINS = new Set([
   "light",
@@ -53,7 +57,7 @@ function normalizeAttributes(domain, source = {}) {
   return attributes;
 }
 
-function normalizeEntity(entity) {
+function normalizeEntity(entity, confirmationRequiredEntityIds = new Set()) {
   const deviceId = entity.entity_id;
   const domain = deviceId.split(".", 1)[0];
   const available = !["unavailable", "unknown"].includes(entity.state);
@@ -62,6 +66,7 @@ function normalizeEntity(entity) {
   // Home Assistant 的 climate 状态通常是 cool/heat/auto；设备管家统一成 on/off，
   // 同时在 attributes.hvac_mode 中保留原始状态。
   const attributes = normalizeAttributes(domain, entity.attributes);
+  const capabilities = discoverHomeAssistantCapabilities(entity);
   if (domain === "climate") {
     attributes.hvac_mode = entity.state;
     state = entity.state === "off" ? "off" : available ? "on" : entity.state;
@@ -74,6 +79,15 @@ function normalizeEntity(entity) {
     state,
     available,
     attributes,
+    capabilities,
+    ...(entity.ha_device_id ? { ha_device_id: entity.ha_device_id } : {}),
+    ...(entity.ha_entity_unique_id ? { ha_entity_unique_id: entity.ha_entity_unique_id } : {}),
+    ...(entity.ha_area_id ? { ha_area_id: entity.ha_area_id } : {}),
+    ...(entity.area_name ? { area_name: entity.area_name } : {}),
+    ...(entity.source_device_name ? { source_device_name: entity.source_device_name } : {}),
+    ...(entity.manufacturer ? { manufacturer: entity.manufacturer } : {}),
+    ...(entity.model ? { model: entity.model } : {}),
+    ...(confirmationRequiredEntityIds.has(deviceId) ? { requires_confirmation: true } : {}),
     last_changed: entity.last_changed,
     last_updated: entity.last_updated,
   };
@@ -88,6 +102,24 @@ function validatePercentage(value, name) {
 
 function serviceFor(device, action, parameters, confirmed) {
   const data = { entity_id: device.device_id };
+
+  const unsupportedCapability = getExplicitlyUnsupportedAction(device.capabilities, action);
+  if (unsupportedCapability) {
+    return failure("UNSUPPORTED_ACTION", `${device.name} 不支持操作：${action}`, {
+      device_id: device.device_id,
+      action,
+      capability_evidence: unsupportedCapability.evidence,
+    });
+  }
+
+  const confirmationPolicy = getDeviceActionConfirmationPolicy(device, action);
+  if (confirmationPolicy.required && confirmed !== true) {
+    return failure("CONFIRMATION_REQUIRED", confirmationPolicy.message, {
+      device_id: device.device_id,
+      action,
+      reason_code: confirmationPolicy.reason_code,
+    });
+  }
 
   if (device.domain === "light") {
     if (action === "turn_on" || action === "turn_off") return { service: action, data };
@@ -130,13 +162,6 @@ function serviceFor(device, action, parameters, confirmed) {
   if (device.domain === "lock") {
     if (action === "lock") return { service: "lock", data };
     if (action === "unlock") {
-      if (!confirmed) {
-        return failure(
-          "CONFIRMATION_REQUIRED",
-          "开锁属于高风险操作，必须得到用户明确确认",
-          { device_id: device.device_id, action },
-        );
-      }
       return { service: "unlock", data };
     }
   }
@@ -151,7 +176,7 @@ function serviceFor(device, action, parameters, confirmed) {
  * the OpenClaw tools can switch backend without changing prompts or contracts.
  */
 export class RealHomeAssistant {
-  constructor({ baseUrl, token, entityAllowlist, fetchImpl = globalThis.fetch, timeoutMs = 8_000 } = {}) {
+  constructor({ baseUrl, token, entityAllowlist, confirmationRequiredEntityIds, fetchImpl = globalThis.fetch, timeoutMs = 8_000, registryClient = null, eventRetentionLimit = 200, eventLedger } = {}) {
     if (!baseUrl) throw new Error("使用真实 Home Assistant 时必须设置 HA_URL");
     if (!token) throw new Error("使用真实 Home Assistant 时必须设置 HA_TOKEN");
     if (typeof fetchImpl !== "function") throw new Error("当前 Node.js 环境不支持 fetch");
@@ -160,9 +185,19 @@ export class RealHomeAssistant {
     this.token = token;
     this.fetch = fetchImpl;
     this.timeoutMs = timeoutMs;
+    this.registryClient = registryClient;
     this.entityAllowlist = entityAllowlist?.length ? new Set(entityAllowlist) : null;
+    this.confirmationRequiredEntityIds = new Set(confirmationRequiredEntityIds ?? []);
     this.auditLog = [];
-    this.eventLedger = new DeviceEventLedger({ sourceType: "home_assistant", sourceId: this.baseUrl });
+    if (eventLedger !== undefined
+      && (typeof eventLedger.append !== "function" || typeof eventLedger.list !== "function")) {
+      throw new Error("eventLedger 必须提供 append() 和 list() 方法");
+    }
+    this.eventLedger = eventLedger ?? new DeviceEventLedger({
+      sourceType: "home_assistant",
+      sourceId: this.baseUrl,
+      retentionLimit: eventRetentionLimit,
+    });
   }
 
   async #request(path, { method = "GET", body } = {}) {
@@ -213,22 +248,56 @@ export class RealHomeAssistant {
     return !this.entityAllowlist || this.entityAllowlist.has(entityId);
   }
 
+  createStateMonitor(options = {}) {
+    return new HomeAssistantStateMonitor({
+      baseUrl: this.baseUrl,
+      token: this.token,
+      ...options,
+    });
+  }
+
   async listDevices({ domain, canonical = false } = {}) {
     const response = await this.#request("/api/states");
     if (!response.success) return response;
 
-    const devices = response.data
+    let sourceEntities = response.data;
+    let registryEnrichment = { status: "disabled" };
+    let disabledEntityCount = 0;
+    if (this.registryClient) {
+      let registryResult;
+      try {
+        registryResult = await this.registryClient.listRegistries();
+      } catch {
+        registryResult = failure("HA_REGISTRY_QUERY_FAILED", "Home Assistant 注册表查询失败");
+      }
+      if (registryResult?.success && registryResult.registries) {
+        const enriched = enrichEntitiesWithRegistries(sourceEntities, registryResult.registries);
+        sourceEntities = enriched.devices;
+        disabledEntityCount = enriched.disabled_entity_count;
+        registryEnrichment = { status: "available" };
+      } else {
+        registryEnrichment = {
+          status: "unavailable",
+          code: registryResult?.error?.code ?? "HA_REGISTRY_QUERY_FAILED",
+          message: registryResult?.error?.message ?? "HA 注册表暂不可用；结果仅包含 REST 实体信息",
+        };
+      }
+    }
+
+    const devices = sourceEntities
       .filter((entity) => {
         const entityDomain = entity.entity_id?.split(".", 1)[0];
         return SUPPORTED_DOMAINS.has(entityDomain)
           && (!domain || entityDomain === domain)
           && this.#isAllowed(entity.entity_id);
       })
-      .map(normalizeEntity);
+      .map((entity) => normalizeEntity(entity, this.confirmationRequiredEntityIds));
 
     return {
       success: true,
       count: devices.length,
+      registry_enrichment: registryEnrichment,
+      ...(registryEnrichment.status === "available" ? { disabled_entity_count: disabledEntityCount } : {}),
       devices: canonical
         ? devices.map((device) => toCanonicalDevice(device, { platform: "home_assistant" }))
         : devices,
@@ -248,7 +317,7 @@ export class RealHomeAssistant {
       }
       return response;
     }
-    const device = normalizeEntity(response.data);
+    const device = normalizeEntity(response.data, this.confirmationRequiredEntityIds);
     return {
       success: true,
       device: canonical ? toCanonicalDevice(device, { platform: "home_assistant" }) : device,
@@ -373,7 +442,7 @@ export class RealHomeAssistant {
     };
   }
 
-  async runScene({ scene_id, planned_temperature_c, task_id = null, trace_id = null } = {}) {
+  async runScene({ scene_id, planned_temperature_c, planned_brightness_pct, task_id = null, trace_id = null } = {}) {
     const scene = SCENES[scene_id];
     if (!scene) {
       return failure("SCENE_NOT_FOUND", `未找到场景：${scene_id}`, {
@@ -384,11 +453,18 @@ export class RealHomeAssistant {
 
     const steps = clone(scene.steps);
     const temperatureStep = steps.find((step) => step.action === "set_temperature");
+    const brightnessStep = steps.find((step) => step.action === "set_brightness");
     if (planned_temperature_c !== undefined) {
       if (!temperatureStep || !Number.isFinite(planned_temperature_c)) {
         return failure("INVALID_PARAMETER", "个性化温度只能用于包含温度步骤的场景，且必须为有效数值", { scene_id });
       }
       temperatureStep.parameters = { ...temperatureStep.parameters, temperature: planned_temperature_c };
+    }
+    if (planned_brightness_pct !== undefined) {
+      if (!brightnessStep || !Number.isInteger(planned_brightness_pct) || planned_brightness_pct < 1 || planned_brightness_pct > 100) {
+        return failure("INVALID_PARAMETER", "个性化亮度只能用于包含亮度步骤的场景，且必须为 1 到 100 的整数", { scene_id });
+      }
+      brightnessStep.parameters = { ...brightnessStep.parameters, brightness: planned_brightness_pct };
     }
 
     const targetIds = [...new Set(steps.map((step) => step.device_id))];
@@ -427,6 +503,36 @@ export class RealHomeAssistant {
       }
     }
 
+    if (planned_brightness_pct !== undefined) {
+      const lightDevice = preflightStates.get(brightnessStep.device_id);
+      const capability = lightDevice?.capabilities?.actions?.set_brightness;
+      const hasObservedBrightness = Number.isFinite(lightDevice?.attributes?.brightness);
+      if (capability?.supported === false
+        || (capability?.supported !== true && !hasObservedBrightness)) {
+        return failure("SCENE_PREFLIGHT_FAILED", "无法确认灯具支持亮度调节；个性化场景未执行", {
+          scene_id,
+          device_id: brightnessStep.device_id,
+          cause: capability?.supported === false ? "DEVICE_ACTION_UNSUPPORTED" : "DEVICE_CAPABILITY_UNKNOWN",
+        });
+      }
+    }
+
+    for (const step of steps) {
+      const device = preflightStates.get(step.device_id);
+      const actionMapping = serviceFor(device, step.action, step.parameters ?? {}, false);
+      if (actionMapping.success === false) {
+        return failure("SCENE_PREFLIGHT_FAILED", "场景中有设备动作不受支持或参数无效；整个场景未执行", {
+          scene_id,
+          device_id: step.device_id,
+          action: step.action,
+          cause: actionMapping.error.code,
+          ...(actionMapping.error.capability_evidence
+            ? { capability_evidence: actionMapping.error.capability_evidence }
+            : {}),
+        });
+      }
+    }
+
     const executions = [];
     for (const step of steps) {
       const result = await this.controlDevice({ ...step, task_id, trace_id });
@@ -450,6 +556,9 @@ export class RealHomeAssistant {
     if (planned_temperature_c !== undefined) {
       expectedStates[temperatureStep.device_id].attributes.temperature = planned_temperature_c;
     }
+    if (planned_brightness_pct !== undefined) {
+      expectedStates[brightnessStep.device_id].attributes.brightness = planned_brightness_pct;
+    }
     const verification = [];
     for (const [device_id, expected] of Object.entries(expectedStates)) {
       const result = await this.getState({ device_id });
@@ -466,6 +575,7 @@ export class RealHomeAssistant {
       scene_id,
       scene_name: scene.name,
       ...(planned_temperature_c !== undefined ? { planned_temperature_c } : {}),
+      ...(planned_brightness_pct !== undefined ? { planned_brightness_pct } : {}),
       ...(task_id ? { task_id } : {}),
       ...(trace_id ? { trace_id } : {}),
       executions,
@@ -474,7 +584,7 @@ export class RealHomeAssistant {
     };
   }
 
-  async diagnoseDevice({ device_id, trace_id = null } = {}) {
+  async diagnoseDevice({ device_id, trace_id = null, emit_alert_events = true } = {}) {
     let devices;
     if (device_id) {
       const state = await this.getState({ device_id });
@@ -515,14 +625,10 @@ export class RealHomeAssistant {
       };
     });
 
-    for (const diagnosis of diagnoses.filter((item) => item.status !== "healthy")) {
-      this.eventLedger.append({
-        event_type: "diagnostic_alert",
-        device_id: diagnosis.device_id,
-        severity: diagnosis.status === "offline" ? "critical" : "warning",
-        trace_id,
-        payload: { code: diagnosis.code, summary: diagnosis.summary },
-      });
+    if (emit_alert_events) {
+      for (const diagnosis of diagnoses.filter((item) => item.status !== "healthy")) {
+        this.recordDiagnosticAlert({ ...diagnosis, trace_id });
+      }
     }
 
     return {
@@ -543,5 +649,76 @@ export class RealHomeAssistant {
 
   getEvents(filters = {}) {
     return this.eventLedger.list(filters);
+  }
+
+  recordDiagnosticAlert({ device_id, status, code, summary, severity = "warning", trace_id = null } = {}) {
+    return this.eventLedger.append({
+      event_type: "diagnostic_alert",
+      device_id,
+      severity: ["warning", "critical"].includes(severity) ? severity : "warning",
+      trace_id,
+      payload: { code, summary },
+    });
+  }
+
+  recordDiagnosticSharedInfrastructure({ affected_device_count = 0, summary } = {}) {
+    return this.eventLedger.append({
+      event_type: "diagnostic_shared_infrastructure_suspected",
+      severity: "warning",
+      payload: {
+        affected_device_count: Number.isSafeInteger(affected_device_count) ? Math.max(0, affected_device_count) : 0,
+        summary: typeof summary === "string" ? summary : "多台家庭设备同时持续离线，可能存在共同基础设施问题；尚未自动判定根因。",
+      },
+    });
+  }
+
+  recordDiagnosticSharedInfrastructureResolved({ affected_device_count = 0, summary } = {}) {
+    return this.eventLedger.append({
+      event_type: "diagnostic_shared_infrastructure_cleared",
+      severity: "info",
+      payload: {
+        affected_device_count: Number.isSafeInteger(affected_device_count) ? Math.max(0, affected_device_count) : 0,
+        summary: typeof summary === "string" ? summary : "同时离线设备数量已低于共同基础设施提示阈值。",
+      },
+    });
+  }
+
+  recordDiagnosticTransient({ device_id, code, duration_ms } = {}) {
+    const safeCode = typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code) ? code : "DEVICE_OFFLINE";
+    return this.eventLedger.append({
+      event_type: "diagnostic_transient",
+      device_id,
+      severity: "info",
+      payload: {
+        code: safeCode,
+        duration_ms: Number.isFinite(duration_ms) ? Math.max(0, Math.round(duration_ms)) : 0,
+        summary: "设备在离线宽限期内恢复可用，未生成故障告警。",
+      },
+    });
+  }
+
+  recordDiagnosticRecovery({ device_id, previous_code } = {}) {
+    return this.eventLedger.append({
+      event_type: "diagnostic_recovered",
+      device_id,
+      severity: "info",
+      payload: {
+        previous_code: typeof previous_code === "string" ? previous_code : "UNKNOWN",
+        summary: "设备当前健康状态已恢复，活动诊断告警已清除。",
+      },
+    });
+  }
+
+  recordDiagnosticTrackingEnded({ device_id, previous_code } = {}) {
+    return this.eventLedger.append({
+      event_type: "diagnostic_tracking_ended",
+      device_id,
+      severity: "info",
+      payload: {
+        previous_code: typeof previous_code === "string" ? previous_code : "UNKNOWN",
+        reason: "entity_missing_from_ha_inventory",
+        summary: "实体未出现在成功的 Home Assistant 清单扫描中，已停止跟踪该活动告警；设备是否修复未知。",
+      },
+    });
   }
 }

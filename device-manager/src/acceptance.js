@@ -66,13 +66,13 @@ const temperatureBeforeConfirmation = runtime.invoke("get_state", { device_id: "
 const auditBeforeConfirmation = runtime.homeAssistant.getAuditLog().length;
 const rejectedSceneExecution = await scenePlanner.execute_scene_plan({
   plan_id: personalizedPlan.plan_id,
-  confirmation_phrase: "确认执行方案 wrong-plan-id",
+  user_confirmed: false,
 });
 const stateAfterRejectedConfirmation = runtime.invoke("get_state", { device_id: "climate.bedroom" });
 const auditAfterRejectedConfirmation = runtime.homeAssistant.getAuditLog().length;
 const confirmedSceneExecution = await scenePlanner.execute_scene_plan({
   plan_id: personalizedPlan.plan_id,
-  confirmation_phrase: personalizedPlan.confirmation_phrase,
+  user_confirmed: true,
 });
 const temperatureAfterConfirmation = runtime.invoke("get_state", { device_id: "climate.bedroom" });
 check("个性化场景先确认、后执行并回读", personalizedPlan.success === true
@@ -91,6 +91,42 @@ check("个性化场景先确认、后执行并回读", personalizedPlan.success 
   temperature_after_confirmation_c: temperatureAfterConfirmation.device?.attributes.temperature,
   verified_steps: confirmedSceneExecution.verification?.filter((entry) => entry.verified).length ?? 0,
   total_steps: confirmedSceneExecution.verification?.length ?? 0,
+});
+
+const brightnessPlanner = createScenePlanningTools({
+  deviceRuntime: runtime,
+  getHouseholdPreference: async ({ memory_type, room_id }) => memory_type === "comfort_brightness_pct"
+    ? { memory_type, value: 65, room_id, status: "confirmed" }
+    : null,
+});
+const personalizedBrightnessPlan = await brightnessPlanner.plan_scene({ scene_id: "home" });
+const brightnessBeforeConfirmation = runtime.invoke("get_state", { device_id: "light.living_room" });
+const brightnessAuditBeforeConfirmation = runtime.homeAssistant.getAuditLog().length;
+const rejectedBrightnessExecution = await brightnessPlanner.execute_scene_plan({
+  plan_id: personalizedBrightnessPlan.plan_id,
+  user_confirmed: false,
+});
+const brightnessAfterRejectedConfirmation = runtime.invoke("get_state", { device_id: "light.living_room" });
+const brightnessAuditAfterRejectedConfirmation = runtime.homeAssistant.getAuditLog().length;
+const confirmedBrightnessExecution = await brightnessPlanner.execute_scene_plan({
+  plan_id: personalizedBrightnessPlan.plan_id,
+  user_confirmed: true,
+});
+const brightnessAfterConfirmation = runtime.invoke("get_state", { device_id: "light.living_room" });
+check("个性化亮度先确认、后执行并回读", personalizedBrightnessPlan.success === true
+  && personalizedBrightnessPlan.steps.find((step) => step.action === "set_brightness")?.parameters.brightness === 65
+  && rejectedBrightnessExecution.error?.code === "CONFIRMATION_REQUIRED"
+  && brightnessAfterRejectedConfirmation.device?.attributes.brightness === brightnessBeforeConfirmation.device?.attributes.brightness
+  && brightnessAuditAfterRejectedConfirmation === brightnessAuditBeforeConfirmation
+  && confirmedBrightnessExecution.success === true
+  && confirmedBrightnessExecution.verification?.every((entry) => entry.verified)
+  && brightnessAfterConfirmation.device?.attributes.brightness === 65, {
+  preview_brightness_pct: personalizedBrightnessPlan.steps.find((step) => step.action === "set_brightness")?.parameters.brightness,
+  brightness_before_confirmation_pct: brightnessBeforeConfirmation.device?.attributes.brightness,
+  rejected_confirmation_code: rejectedBrightnessExecution.error?.code,
+  brightness_after_confirmation_pct: brightnessAfterConfirmation.device?.attributes.brightness,
+  verified_steps: confirmedBrightnessExecution.verification?.filter((entry) => entry.verified).length ?? 0,
+  total_steps: confirmedBrightnessExecution.verification?.length ?? 0,
 });
 
 const lockBefore = runtime.invoke("get_state", { device_id: "lock.front_door" });

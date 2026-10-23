@@ -28,7 +28,7 @@ rem behavior rules and skills, so use that Agent id instead of the generic
 rem onboarding Agent (dev).
 rem Use a fresh session key after plugin/tool configuration changes. The old
 rem `main` session can retain a stale tool snapshot from before authorization.
-set "DEVICE_MANAGER_SESSION=agent:device-manager:main-v2"
+set "DEVICE_MANAGER_SESSION=agent:device-manager:main-v5"
 openclaw tui --session %DEVICE_MANAGER_SESSION% --thinking off
 if errorlevel 1 (
   echo.

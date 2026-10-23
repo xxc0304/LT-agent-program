@@ -5,7 +5,17 @@ import test from "node:test";
 import { MockHomeAssistant } from "../src/mock-ha.js";
 import { HOUSEHOLD_MEMORY_TOOL_DEFINITIONS } from "../src/memory-tools.js";
 import { ORCHESTRATOR_TOOL_DEFINITIONS } from "../src/orchestrator-tools.js";
+import { AGENT_PLAN_TOOL_DEFINITIONS } from "../src/agent-plan-tools.js";
+import { MOCK_AGENT_CHAIN_TOOL_DEFINITION } from "../src/mock-agent-chain-tool.js";
+import { MOCK_MEMORY_LEARNING_TOOL_DEFINITION } from "../src/mock-memory-learning-tool.js";
+import { MOCK_MAINTENANCE_REMINDER_TOOL_DEFINITION } from "../src/mock-maintenance-reminder-tool.js";
 import { SCENE_PLANNING_TOOL_DEFINITIONS } from "../src/scene-planning-tools.js";
+import { DEVICE_INVENTORY_TOOL_DEFINITIONS } from "../src/device-inventory-tools.js";
+import { ADAPTIVE_ENERGY_SCENE_TOOL_DEFINITIONS } from "../src/adaptive-energy-scene-tools.js";
+import { DEVICE_MONITOR_TOOL_DEFINITIONS } from "../src/device-monitor-tools.js";
+import { ROUTINE_NOTIFICATION_TOOL_DEFINITIONS } from "../src/routine-notification-tools.js";
+import { ENERGY_OPERATIONS_TOOL_DEFINITIONS } from "../src/energy-operations-tools.js";
+import { MAINTENANCE_REMINDER_TOOL_DEFINITIONS } from "../src/maintenance-reminder-tools.js";
 import { createDeviceToolRuntime, DEVICE_TOOL_DEFINITIONS } from "../src/tools.js";
 
 test("暴露六个设备工具（含事件查询）", () => {
@@ -22,9 +32,19 @@ test("OpenClaw manifest 声明设备工具和调度工具", () => {
   assert.deepEqual(manifest.contracts.tools, [
     ...DEVICE_TOOL_DEFINITIONS,
     ...ORCHESTRATOR_TOOL_DEFINITIONS,
+    ...AGENT_PLAN_TOOL_DEFINITIONS,
+    MOCK_AGENT_CHAIN_TOOL_DEFINITION,
+    MOCK_MEMORY_LEARNING_TOOL_DEFINITION,
+    MOCK_MAINTENANCE_REMINDER_TOOL_DEFINITION,
     ...HOUSEHOLD_MEMORY_TOOL_DEFINITIONS,
+    ...ROUTINE_NOTIFICATION_TOOL_DEFINITIONS,
     ...SCENE_PLANNING_TOOL_DEFINITIONS,
-  ].map((tool) => tool.name));
+    ...ADAPTIVE_ENERGY_SCENE_TOOL_DEFINITIONS,
+    ...DEVICE_MONITOR_TOOL_DEFINITIONS,
+    ...DEVICE_INVENTORY_TOOL_DEFINITIONS,
+    ...ENERGY_OPERATIONS_TOOL_DEFINITIONS,
+    ...MAINTENANCE_REMINDER_TOOL_DEFINITIONS,
+  ].map((tool) => tool.name).concat("talk_to_device_manager", "call_independent_agent", "evaluate_energy_event_with_independent_agent"));
 });
 
 test("列出全部模拟设备", () => {
@@ -126,20 +146,30 @@ test("空调温度必须在设备允许范围内", () => {
   assert.equal(result.error.code, "INVALID_PARAMETER");
 });
 
-test("未确认时禁止开锁且状态不变", () => {
+test("未确认时禁止门锁锁定或解锁且状态不变", () => {
   const runtime = createDeviceToolRuntime();
-  const result = runtime.invoke("control_device", {
-    device_id: "lock.front_door",
-    action: "unlock",
-  });
-  const state = runtime.invoke("get_state", { device_id: "lock.front_door" });
+  for (const action of ["lock", "unlock"]) {
+    const result = runtime.invoke("control_device", {
+      device_id: "lock.front_door",
+      action,
+    });
+    const state = runtime.invoke("get_state", { device_id: "lock.front_door" });
 
-  assert.equal(result.success, false);
-  assert.equal(result.error.code, "CONFIRMATION_REQUIRED");
-  assert.equal(state.device.state, "locked");
+    assert.equal(result.success, false, action);
+    assert.equal(result.error.code, "CONFIRMATION_REQUIRED", action);
+    assert.equal(state.device.state, "locked", action);
+  }
 });
 
-test("明确确认后允许开锁", () => {
+test("明确确认后允许门锁锁定或解锁", () => {
+  const lockRuntime = createDeviceToolRuntime();
+  const locking = lockRuntime.invoke("control_device", {
+    device_id: "lock.front_door",
+    action: "lock",
+    confirmed: true,
+  });
+  assert.equal(locking.success, true);
+
   const runtime = createDeviceToolRuntime();
   const result = runtime.invoke("control_device", {
     device_id: "lock.front_door",
@@ -149,6 +179,20 @@ test("明确确认后允许开锁", () => {
 
   assert.equal(result.success, true);
   assert.equal(result.new_state, "unlocked");
+});
+
+test("Mock HA 对被标记为高风险的非门锁设备也要求确认", () => {
+  const homeAssistant = new MockHomeAssistant();
+  homeAssistant.devices.get("switch.living_room_plug").attributes.requires_confirmation = true;
+  const runtime = createDeviceToolRuntime(homeAssistant);
+  const result = runtime.invoke("control_device", {
+    device_id: "switch.living_room_plug",
+    action: "turn_on",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(homeAssistant.getState({ device_id: "switch.living_room_plug" }).device.state, "off");
 });
 
 test("不可用设备不能被控制", () => {

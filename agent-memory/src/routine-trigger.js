@@ -96,6 +96,7 @@ export function createRoutineDueEvaluator({
       }
 
       const events = [];
+      const conflicts = [];
       for (const routineType of ROUTINE_TYPES) {
         const preference = await store.getPreference({
           memory_type: routineType,
@@ -103,6 +104,14 @@ export function createRoutineDueEvaluator({
           day_type: local.dayType,
           subject_id,
         });
+        if (preference?.status === "conflict_review") {
+          conflicts.push({
+            routine_type: routineType,
+            conflict_scopes: preference.conflict_scopes ?? [],
+            candidates: preference.candidates ?? [],
+          });
+          continue;
+        }
         if (!preference || !/^\d{2}:\d{2}$/.test(preference.value)) continue;
         const [hour, minute] = preference.value.split(":").map(Number);
         const targetTimeMs = (hour * 60 + minute) * 60_000;
@@ -137,9 +146,10 @@ export function createRoutineDueEvaluator({
 
       return {
         success: true,
-        status: events.length ? "DUE_EVENT_READY" : "NOT_DUE",
+        status: conflicts.length ? "PREFERENCE_CONFLICT" : events.length ? "DUE_EVENT_READY" : "NOT_DUE",
         execution_performed: false,
         events,
+        ...(conflicts.length ? { conflicts, requires_user_resolution: true } : {}),
         note: "到期事件仅作为调度输入返回；调用方负责幂等去重和通知授权，记忆服务不发送通知或控制设备。",
       };
     },

@@ -433,6 +433,118 @@ test("任务按优先级和截止时间排序", async () => {
   assert.deepEqual(order, ["critical-late", "high-early", "normal-late"]);
 });
 
+test("同一设备互斥任务由更高优先级胜出，低优先级任务不执行", async () => {
+  const scheduler = new MultiAgentScheduler();
+  const executed = [];
+  scheduler.registerAgent({
+    agent_id: "device-manager",
+    executeTask: async (task) => {
+      executed.push(task.task_id);
+      return {
+        task_id: task.task_id,
+        target_agent: "device-manager",
+        status: "SUCCEEDED",
+        completed_at: new Date().toISOString(),
+        trace_id: task.trace_id,
+      };
+    },
+  });
+
+  const lowerPriority = deviceActionTask({
+    task_id: "task-light-off-low",
+    action: "turn_off",
+    priority: "P3",
+    idempotency_key: "light-off-low",
+    trace_id: "trace-light-off-low",
+  });
+  const higherPriority = deviceActionTask({
+    task_id: "task-light-on-high",
+    action: "turn_on",
+    priority: "P1",
+    idempotency_key: "light-on-high",
+    trace_id: "trace-light-on-high",
+  });
+
+  assert.equal(scheduler.enqueueTask(lowerPriority).success, true);
+  assert.equal(scheduler.enqueueTask(higherPriority).success, true);
+  await scheduler.drain();
+
+  assert.deepEqual(executed, ["task-light-on-high"]);
+  assert.equal(scheduler.getTrace("trace-light-on-high").status, "SUCCEEDED");
+  const superseded = scheduler.getTrace("trace-light-off-low");
+  assert.equal(superseded.status, "SUPERSEDED");
+  assert.equal(superseded.receipts[0].error.code, "TASK_SUPERSEDED_BY_HIGHER_PRIORITY");
+  assert.ok(superseded.stages.some((stage) => stage.stage === "task_superseded"));
+});
+
+test("同一设备同优先级互斥任务全部拒绝执行并记录冲突", async () => {
+  const scheduler = new MultiAgentScheduler();
+  const executed = [];
+  scheduler.registerAgent({
+    agent_id: "device-manager",
+    executeTask: async (task) => {
+      executed.push(task.task_id);
+      return { task_id: task.task_id, target_agent: "device-manager", status: "SUCCEEDED", completed_at: new Date().toISOString() };
+    },
+  });
+
+  const turnOn = deviceActionTask({
+    task_id: "task-tie-on",
+    action: "turn_on",
+    priority: "P2",
+    idempotency_key: "tie-on",
+    trace_id: "trace-tie-on",
+  });
+  const turnOff = deviceActionTask({
+    task_id: "task-tie-off",
+    action: "turn_off",
+    priority: "P2",
+    idempotency_key: "tie-off",
+    trace_id: "trace-tie-off",
+  });
+
+  assert.equal(scheduler.enqueueTask(turnOn).success, true);
+  const conflict = scheduler.enqueueTask(turnOff);
+  assert.equal(conflict.success, false);
+  assert.equal(conflict.error.code, "TASK_CONFLICT");
+  await scheduler.drain();
+
+  assert.deepEqual(executed, []);
+  assert.equal(scheduler.getTrace("trace-tie-on").status, "FAILED");
+  assert.equal(scheduler.getTrace("trace-tie-on").receipts[0].error.code, "TASK_CONFLICT");
+  assert.equal(scheduler.getTrace("trace-tie-off").status, "FAILED");
+  assert.equal(scheduler.getTrace("trace-tie-off").errors[0].resolution, "EQUAL_PRIORITY_FAIL_CLOSED");
+});
+
+test("同一设备不同动作冲突组的任务允许共同排队", async () => {
+  const scheduler = new MultiAgentScheduler();
+  const executed = [];
+  scheduler.registerAgent({
+    agent_id: "device-manager",
+    executeTask: async (task) => {
+      executed.push(task.task_id);
+      return { task_id: task.task_id, target_agent: "device-manager", status: "SUCCEEDED", completed_at: new Date().toISOString() };
+    },
+  });
+
+  assert.equal(scheduler.enqueueTask(deviceActionTask({
+    task_id: "task-power-off",
+    action: "turn_off",
+    idempotency_key: "power-off",
+    trace_id: "trace-power-off",
+  })).success, true);
+  assert.equal(scheduler.enqueueTask(deviceActionTask({
+    task_id: "task-light-brightness",
+    action: "set_brightness",
+    parameters: { brightness: 40 },
+    idempotency_key: "brightness-40",
+    trace_id: "trace-brightness",
+  })).success, true);
+
+  await scheduler.drain();
+  assert.deepEqual(executed.sort(), ["task-light-brightness", "task-power-off"]);
+});
+
 test("同一个幂等键只允许进入一次队列", async () => {
   const scheduler = new MultiAgentScheduler();
   let calls = 0;

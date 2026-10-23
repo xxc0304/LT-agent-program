@@ -6,13 +6,37 @@
   "description": "家庭微脑最小多 Agent 调度器和学习行为事件适配器",
   "scripts": {
     "demo": "node src/demo.js",
+    "demo:energy-event": "node src/run-energy-event-demo.js",
+    "demo:plan-validation": "node src/plan-validator-demo.js",
+    "demo:plan-workflow": "node src/plan-workflow-demo.js",
     "demo:scene-review": "node src/demo-scene-review.js",
     "replay:scene-pilot": "node src/replay-scene-pilot.js",
     "run:image": "node src/run-image.js",
     "run:sequence": "node src/run-sequence.js",
-    "test": "node --test"
+    "test": "node --test",
+    "plugin:build": "openclaw plugins build --root . --entry ./src/openclaw-platform-plugin.js",
+    "plugin:validate": "openclaw plugins validate --root . --entry ./src/openclaw-platform-plugin.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1-2"
+  },
+  "dependencies": {
+    "typebox": "^1.1.38"
+  },
+  "openclaw": {
+    "extensions": [
+      "./src/openclaw-platform-plugin.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1-2",
+      "minGatewayVersion": ">=2026.7.1-2"
+    },
+    "build": {
+      "openclawVersion": "2026.7.1-2",
+      "pluginSdkVersion": "2026.7.1-2"
+    }
   }
 }

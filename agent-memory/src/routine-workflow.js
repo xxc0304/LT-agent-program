@@ -42,6 +42,8 @@ function bucketTimeToQuarterHour(value) {
 
 /**
  * Converts authorized, structured routine signals into local-memory candidates.
+ * This API is for a trusted upstream adapter only; it is not an OpenClaw tool
+ * and does not infer provenance from HA state_changed events.
  * It does not infer a bedtime from images, device state, or raw conversation,
  * and its preview operation never creates a timer or controls a device.
  */
@@ -49,6 +51,7 @@ export function createRoutineMemoryWorkflow({ store } = {}) {
   if (!store
     || typeof store.proposeInferredCandidate !== "function"
     || typeof store.confirmCandidate !== "function"
+    || typeof store.getObservationConsent !== "function"
     || typeof store.getPreference !== "function") {
     throw new Error("routine workflow 需要支持候选、确认和查询的家庭记忆存储");
   }
@@ -60,6 +63,10 @@ export function createRoutineMemoryWorkflow({ store } = {}) {
       }
       if (event.consent_to_observe !== true) {
         return failure("MEMORY_CONSENT_REQUIRED", "观察和记录作息前必须取得用户明确同意。");
+      }
+      const consent = await store.getObservationConsent();
+      if (consent.enabled !== true) {
+        return failure("MEMORY_CONSENT_REQUIRED", "尚未保存作息观察授权；先由用户明确开启观察，未记录候选。");
       }
       if (typeof event.event_id !== "string" || !event.event_id) {
         return failure("EVENT_ID_REQUIRED", "作息观察必须包含事件 ID。");
@@ -120,6 +127,19 @@ export function createRoutineMemoryWorkflow({ store } = {}) {
           execution_performed: false,
           automation_enabled: false,
           suggestion: null,
+        };
+      }
+      if (preference.status === "conflict_review") {
+        return {
+          success: true,
+          status: "PREFERENCE_CONFLICT",
+          execution_performed: false,
+          automation_enabled: false,
+          conflict_scopes: preference.conflict_scopes ?? [],
+          candidates: preference.candidates ?? [],
+          requires_user_resolution: true,
+          suggestion: null,
+          note: "作息偏好存在冲突；未生成提醒建议或安排提醒，需先请用户明确选择。",
         };
       }
       return {

@@ -18,6 +18,22 @@ const PRIORITY_RANK = Object.freeze({
   low: 3,
 });
 
+const ACTION_CONFLICT_GROUPS = Object.freeze({
+  turn_on: "power",
+  turn_off: "power",
+  lock: "lock_state",
+  unlock: "lock_state",
+  open: "position",
+  close: "position",
+  stop: "position",
+  set_temperature: "temperature",
+  set_target_temperature: "temperature",
+  set_brightness: "brightness",
+  set_color_temperature: "color_temperature",
+  set_hvac_mode: "hvac_mode",
+  set_fan_mode: "fan_mode",
+});
+
 function clone(value) {
   return structuredClone(value);
 }
@@ -33,6 +49,26 @@ function stableStringify(value) {
 function taskOperationFingerprint(task) {
   const { task_id, trace_id, ...operation } = task;
   return stableStringify(operation);
+}
+
+function taskConflictGroup(task) {
+  const declared = task?.metadata?.conflict_group;
+  if (typeof declared === "string" && declared.trim()) return declared.trim();
+  const action = String(task?.action ?? "").trim().toLowerCase();
+  return ACTION_CONFLICT_GROUPS[action] ?? `action:${action}`;
+}
+
+function taskCommandFingerprint(task) {
+  return stableStringify({
+    action: task.action,
+    parameters: task.parameters ?? {},
+  });
+}
+
+function tasksConflict(left, right) {
+  return left?.target_ref?.device_id === right?.target_ref?.device_id
+    && taskConflictGroup(left) === taskConflictGroup(right)
+    && taskCommandFingerprint(left) !== taskCommandFingerprint(right);
 }
 
 async function settleWithin(promise, timeoutMs) {
@@ -74,7 +110,7 @@ function validateEvent(event) {
   return null;
 }
 
-function validateTask(task) {
+export function validateTask(task) {
   if (!task || typeof task !== "object" || Array.isArray(task)) return "任务必须是 JSON 对象";
   for (const field of ["schema_version", "task_id", "task_type", "target_ref", "action", "priority", "deadline_ms", "resource_requirement", "privacy_level", "data_level", "idempotency_key", "trace_id"]) {
     if (task[field] === undefined) return `缺少任务字段：${field}`;
@@ -263,6 +299,7 @@ export class MultiAgentScheduler {
       for (const task of result?.tasks ?? []) {
         const enqueueResult = this.enqueueTask(task, { trace_id: traceId, parent_agent: agent.agent_id });
         if (!enqueueResult.success) {
+          if (enqueueResult.error.code === "TASK_CONFLICT") continue;
           trace.errors.push({
             agent_id: agent.agent_id,
             task_id: task?.task_id ?? null,
@@ -309,6 +346,53 @@ export class MultiAgentScheduler {
     }
 
     const traceId = trace_id ?? canonicalTask.trace_id;
+    const queuedConflicts = this.queue.filter((item) => tasksConflict(canonicalTask, item.task));
+    if (queuedConflicts.length > 0) {
+      const incoming = { task: canonicalTask, trace_id: traceId, parent_agent };
+
+      const contenders = [...queuedConflicts, incoming];
+      const bestRank = Math.min(...contenders.map((item) => priorityRank(item.task.priority)));
+      const highestPriority = contenders.filter((item) => priorityRank(item.task.priority) === bestRank);
+
+      if (highestPriority.length > 1) {
+        for (const item of queuedConflicts) {
+          this.queue = this.queue.filter((queued) => queued !== item);
+          this.#recordQueuedConflict(item, canonicalTask, "TASK_CONFLICT", "EQUAL_PRIORITY_FAIL_CLOSED");
+        }
+        const error = {
+          code: "TASK_CONFLICT",
+          message: "同一设备存在同优先级互斥任务；为避免误操作，冲突任务均不执行",
+          conflicting_task_ids: queuedConflicts.map((item) => item.task.task_id),
+          resolution: "EQUAL_PRIORITY_FAIL_CLOSED",
+        };
+        this.#recordIncomingConflict(incoming, error);
+        return { success: false, error };
+      }
+
+      if (highestPriority[0] !== incoming) {
+        const error = {
+          code: "TASK_CONFLICT",
+          message: "同一设备已有更高优先级的互斥任务；拒绝较低优先级任务",
+          conflicting_task_ids: queuedConflicts.map((item) => item.task.task_id),
+          resolution: "HIGHER_PRIORITY_TASK_WINS",
+        };
+        this.#recordIncomingConflict(incoming, error);
+        return { success: false, error };
+      }
+
+      for (const item of queuedConflicts) {
+        this.queue = this.queue.filter((queued) => queued !== item);
+        this.#recordQueuedConflict(item, canonicalTask, "TASK_SUPERSEDED_BY_HIGHER_PRIORITY", "HIGHER_PRIORITY_TASK_WINS");
+      }
+      const trace = this.#ensureTrace(traceId, canonicalTask, parent_agent);
+      this.#stage(trace, "task_conflict_resolved", "scheduler", "ok", {
+        task_id: canonicalTask.task_id,
+        conflicting_task_ids: queuedConflicts.map((item) => item.task.task_id),
+        resolution: "HIGHER_PRIORITY_TASK_WINS",
+        conflict_group: taskConflictGroup(canonicalTask),
+      });
+    }
+
     const item = {
       task: clone({ ...canonicalTask, trace_id: traceId }),
       trace_id: traceId,
@@ -480,6 +564,66 @@ export class MultiAgentScheduler {
     return trace;
   }
 
+  #recordIncomingConflict(item, error) {
+    const task = item.task;
+    const trace = this.#ensureTrace(item.trace_id, task, item.parent_agent);
+    trace.errors.push({
+      agent_id: item.parent_agent ?? task.source_agent,
+      task_id: task.task_id,
+      ...clone(error),
+    });
+    this.#stage(trace, "task_conflict", "scheduler", "failed", {
+      task_id: task.task_id,
+      conflicting_task_ids: error.conflicting_task_ids ?? [],
+      resolution: error.resolution,
+      conflict_group: taskConflictGroup(task),
+    });
+    this.#finalizeTrace(trace);
+  }
+
+  #recordQueuedConflict(item, competingTask, code, resolution) {
+    const task = item.task;
+    const trace = this.#ensureTrace(item.trace_id, task, item.parent_agent);
+    const message = code === "TASK_SUPERSEDED_BY_HIGHER_PRIORITY"
+      ? "任务被同一设备上更高优先级的互斥任务取代，未执行"
+      : "同一设备存在同优先级互斥任务；为避免误操作，冲突任务均不执行";
+    const receipt = {
+      schema_version: CONTRACT_VERSION,
+      task_id: task.task_id,
+      target_agent: task.target_agent,
+      status: "FAILED",
+      retryable: false,
+      completed_at: nowIso(this.clock),
+      trace_id: item.trace_id,
+      result: {},
+      error: {
+        code,
+        message,
+        conflicting_task_id: competingTask.task_id,
+        resolution,
+        side_effects_unknown: false,
+      },
+    };
+    trace.receipts.push(receipt);
+    if (code === "TASK_CONFLICT") {
+      trace.errors.push({ agent_id: item.parent_agent ?? task.source_agent, task_id: task.task_id, ...clone(receipt.error) });
+    }
+    this.#stage(trace, code === "TASK_CONFLICT" ? "task_conflict" : "task_superseded", "scheduler", "skipped", {
+      task_id: task.task_id,
+      conflicting_task_id: competingTask.task_id,
+      resolution,
+      conflict_group: taskConflictGroup(task),
+    });
+    this.executionLog.push({
+      trace_id: item.trace_id,
+      task_id: task.task_id,
+      target_agent: task.target_agent,
+      attempt: 0,
+      status: receipt.status,
+    });
+    this.#finalizeTrace(trace);
+  }
+
   #addAgent(trace, agentId) {
     if (agentId && !trace.agents_involved.includes(agentId)) trace.agents_involved.push(agentId);
   }
@@ -514,7 +658,14 @@ export class MultiAgentScheduler {
       trace.status = "PLANNED";
       return;
     }
-    const statuses = [...receiptsByTask.values()].map((receipt) => receipt.status);
+    const actionableReceipts = [...receiptsByTask.values()].filter(
+      (receipt) => receipt.error?.code !== "TASK_SUPERSEDED_BY_HIGHER_PRIORITY",
+    );
+    if (actionableReceipts.length === 0) {
+      trace.status = "SUPERSEDED";
+      return;
+    }
+    const statuses = actionableReceipts.map((receipt) => receipt.status);
     if (statuses.every((status) => status === "SUCCEEDED")) trace.status = "SUCCEEDED";
     else if (statuses.includes("CHALLENGE")) trace.status = "CHALLENGE";
     else if (statuses.includes("DENIED")) trace.status = "DENIED";

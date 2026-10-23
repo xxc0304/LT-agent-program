@@ -9,6 +9,7 @@ const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lt-routine-demo-"));
 
 try {
   const store = new PreferenceMemoryStore({ filePath: path.join(directory, "memory.json") });
+await store.setObservationConsent({ enabled: true, user_explicit_confirmation: true });
   const workflow = createRoutineMemoryWorkflow({ store });
   const observations = [
     { event_id: "demo-sleep-2026-09-21", occurred_at: "2026-09-21T14:30:00Z" },

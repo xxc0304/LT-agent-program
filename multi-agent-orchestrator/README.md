@@ -21,6 +21,9 @@ Mock Home Assistant
 - `src/learning-agent.js`：把单行为结果或试验性的课堂场景结果转换为 `learning_behavior` Event；节能 Agent 只采用先前实际路由到自身的可信 HA 无人事件作独立佐证，不读取模型在 payload 中自报的传感器证明；
 - 单张图片固定标记为 `needs_review: true`、`duration_ms: 0`；多帧接口只根据输入帧的真实时间戳计算跨度，默认至少 6 帧、跨度不少于 10 分钟、相邻帧间隔不超过 2 分钟，且 80% 高置信度在位结果一致，才确认稳定在位状态；
 - `src/scheduler.js`：注册 Agent、按事件路由、按优先级/截止时间排序、处理幂等、重试和 trace；
+- `src/openclaw-agent-client.js`：独立 OpenClaw Agent 的调用边界；严格解析并校验 Event/Task JSON、来源/目标 Agent 和 trace，处理超时、敏感字段与幂等键；
+- `src/openclaw-gateway-transport.js`：适配 OpenClaw 2026.7.1-2 插件公开的 `runtime.subagent.run` / `waitForRun` / `getSessionMessages` 链路；固定子 Agent 白名单，调用前执行 A2A 与会话可见性校验，超时后不自动重发；
+- `../device-manager/src/independent-learning-energy-workflow.js`：将结构化学习观测依次交给独立学习伴学/节能 Agent；以本地认证回调、事件一致性、时效、置信度、目标范围和复核状态作为代码门禁；
 - `../docs/agent-trigger-and-memory-policy.md`：事件来源/Agent 触发矩阵和家庭记忆边界；
 - `../agent-memory/`：家庭偏好本地存储服务，由设备管家 OpenClaw 插件提供读写工具；
 - `src/demo.js`：完整 Mock 演示；
@@ -49,6 +52,18 @@ npm run replay:scene-pilot -- --out ..\learning-behavior\data\scb\results\scene-
 ```
 
 这份回放只检验当前 Agent 适配与安全规则，不重新计算视觉识别准确率。
+
+### OpenClaw 独立 Agent Gateway 调用边界
+
+用户不需要进入业务 Agent 会话。用户主 Agent `dev` 通过 `orchestrate_household_agents` 理解需求并动态选择已登记 Agent；只有涉及设备操作时才调用设备管家。旧的 `talk_to_device_manager` 固定转发工具仅保留兼容实现，部署器会在主 Agent 上显式禁用，主 Agent 指令不得要求调用它。
+
+设备管家插件提供 `call_independent_agent`：由 OpenClaw 7.1 ToolPluginFactory 注入可信的 `agentId`、`sessionKey` 和活动配置；工具仅在 `device-manager` 会话注册，目标限 `learning-companion` / `energy-saving`。传输先用 OpenClaw 公共策略检查 A2A 白名单和会话可见性，再通过插件公开的 `runtime.subagent.run` 启动、`waitForRun` 等待、`getSessionMessages` 读取本轮新回复。普通本地插件不能调用受限的 `runtime.gateway.request`（该接口仅供内置/受信任官方插件）；因此不得通过把项目插件伪装成官方插件来绕过权限边界。
+
+客户端只允许学习伴学 Agent 返回 Event、或节能 Agent 返回 Task/严格的 `NO_ACTION` 结果；回复必须是严格 JSON，并通过公共契约 schema、来源/目标 Agent 和相同 `trace_id` 校验。输入拒绝认证信息及原始图片/视频字段；幂等键传递给运行时；发起 run 后的超时/错误不会自动重试。通用 `call_independent_agent` 只返回候选结果；另有 `evaluate_energy_event_with_independent_agent` 会把标准 Event 交给独立节能 Agent：`NO_ACTION` 正常结束、不创建计划；Task 则送入设备管家 `executeEnergyTask`，由其重读设备清单和状态、建立计划并走原有确认/执行/回读流程。对话工具输入不是已认证传感器事件，因此 Task 不获得可信事件自动执行资格。此接入使用设备管家计划策略工作流，不代表它已进入 `MultiAgentScheduler` 的内存事件队列。
+
+**2026-10-15 状态更新：**独立节能 Agent 调用链已在隔离 OpenClaw `2026.7.1-2` profile 上完成一次 DeepSeek V4 Flash 合成联调，返回 `NO_ACTION / OCCUPANCY_NOT_CONFIRMED`，没有创建设备计划或执行设备动作。此前“仅 fake Gateway、未触发真实 Agent”的描述属于较早阶段记录，已由本仓库 `docs/openclaw-independent-agent-orchestration-v0.1.md` 的 2026-10-15 根因修复与复验记录取代。真实 HA、传感器和家电仍未联调。
+
+学习伴学→节能的独立 Agent 组合工作流已补上 Node.js 层的结构化观测认证入口、Event 一致性校验、置信度/复核/课堂范围/持续时间/时效门禁与跨 Agent trace/幂等。它目前尚未注册成对话工具：本机还没有能向该入口提供“由受信任视觉/传感器适配器认证”的真实结构化观测源，聊天文字和工具参数不能自行获得此认证。相关本地测试不调用模型、不连接 HA。
 
 ## 接入真实视觉识别
 
@@ -131,8 +146,11 @@ node src/run-image.js "..\learning-behavior\data\scb\images\reading\示例.jpg" 
 7. 目标 Agent 不可用时返回失败回执；
 8. 每次事件、Agent 调用、任务入队、任务派发、重试和任务完成都写入同一个 `trace_id`；
 9. 学习伴学 Agent 只产生事件，节能 Agent 只生成任务，设备管家 Agent 才能执行设备动作。
+10. 同一设备、同一互斥动作组的待执行任务会进行冲突仲裁：优先级更高的任务胜出并使较低优先级任务以 `TASK_SUPERSEDED_BY_HIGHER_PRIORITY` 结束；同优先级互斥任务全部拒绝执行并记录 `TASK_CONFLICT`。默认冲突组覆盖电源、门锁、位置、温度、亮度、色温、HVAC 模式和风速；其他动作可通过 Task `metadata.conflict_group` 声明共享冲突组，未声明时仅相同动作名互相冲突；
 
 第一版使用确定性规则和 Mock 执行节点，后续可替换为消息队列、真实 ResourceStatus 和其他小组的 Agent，不改变事件和任务边界。
+
+冲突仲裁只针对尚在本地队列中的任务，不撤销已经开始执行的物理动作；冲突组映射及“同优先级全部拒绝”的策略是 A-09 本地 MVP 约定，须在接入其他组 Task/PolicyDecision 后共同评审。它不是基于 LLM 的动态 Agent 选择或完整多目标调度算法。
 
 ## OpenClaw 注册与仓库 Mock 调度的区别
 
@@ -151,3 +169,31 @@ node src/run-image.js "..\learning-behavior\data\scb\images\reading\示例.jpg" 
 进程内桥接逻辑和 Mock 设备结果。
 
 超时与截止时间测试覆盖了不自动重试的副作用不确定场景。`npm test` 可验证重复投递、ID 冲突、过期任务及超时重试策略。
+
+## 平台级 OpenClaw 多 Agent 编排入口（新增）
+
+上面既有的 `MultiAgentScheduler` 和设备管家内部 OpenClaw 工具仍用于原有事件链路。本项目另增加平台级入口，避免把设备管家误当成总调度器：
+
+```text
+OpenClaw 主对话模型
+  → orchestrate_household_agents（本平台插件）
+  → 登记表/能力校验/依赖调度/冲突与澄清门
+  → 一个或多个已登记 Agent 的 OpenClaw Gateway 会话
+  → 汇总结果回到 OpenClaw 主对话
+```
+
+- `src/platform-agent-registry.js` 登记 Agent 及其能力；未登记 ID 或能力不能调用。新增只读/规划 Agent 可通过插件 `additionalAgents` 配置登记。只有 `device-manager` 可声明 `device_action` 能力。
+- `src/platform-orchestrator.js` 根据 OpenClaw 提交的计划校验步骤和依赖；不同 Agent 的独立分析可以并发，同一 Agent 会话串行。一个请求中的多项设备操作必须合并成一个设备管家步骤；若错误拆成多个步骤，平台在任何 Agent 调用前拦截，OpenClaw 可自动合并重提一次。
+- `src/openclaw-platform-adapter.js` 使用 OpenClaw `runtime.subagent` 公共运行接口，并检查 Agent-to-Agent 白名单和会话可见性；适配器不连接 HA，不自动重试已发送但结果不明的调用。
+- `src/openclaw-platform-plugin.js` 向配置的用户主 Agent（默认 `dev`）提供 `orchestrate_household_agents` 工具。OpenClaw 现有模型负责理解自然语言和提出计划；插件不新增 DeepSeek API。
+- OpenClaw 可提交 `dispatch`、`clarify` 或 `unsupported` 决定：信息不足时自然语言追问；没有已登记能力时明确说明暂不支持；即便模型误写了未登记的 Agent/能力，也会在任何 Agent/Gateway 调用前返回 `UNSUPPORTED`。这些路径不会猜造能力或执行设备动作。
+- 用户目标不清、设备动作冲突或业务 Agent 要求确认时，工具返回结构化问题/状态并停止后续步骤；OpenClaw 再用自然语言询问用户。仅计划错误地拆分设备动作时，OpenClaw 可按工具返回的专用结构码合并后自动重提一次，无需把内部错误暴露给用户。用户回复后应提交新计划；此 MVP 不跨 Gateway 重启恢复待答计划。
+- 设备管家的原 `talk_to_device_manager` 仍保留供旧部署兼容；部署器会在主 Agent 上显式禁用它，并只允许使用 `orchestrate_household_agents`，避免固定直达设备管家的旧路径。
+
+见 [`docs/openclaw-platform-multi-agent-orchestration-v0.1.md`](../docs/openclaw-platform-multi-agent-orchestration-v0.1.md) 获取完整流程与边界。运行新增 Mock 验证：
+
+```powershell
+node --test test/platform-orchestrator.test.js test/openclaw-platform-adapter.test.js
+```
+
+这组测试使用模拟 Agent/Gateway，不表示新插件已经安装到实际 OpenClaw Gateway。部署还需安装本插件、授权 OpenClaw A2A/会话可见性，并在 `dev` 上确认工具可见；Gateway 实际调用测试需在安装后单独完成。

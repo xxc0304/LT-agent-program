@@ -48,7 +48,13 @@ test("加密备份可恢复到新文件，备份不包含可读的记忆值", as
 
   const restored = await restoreEncryptedMemoryBackup({ backupPath, destinationPath, passphrase: PASSPHRASE });
   assert.equal(restored.memory_count, 1);
-  assert.deepEqual(JSON.parse(await fs.readFile(destinationPath, "utf8")), document);
+  const restoredDocument = JSON.parse(await fs.readFile(destinationPath, "utf8"));
+  assert.equal(restoredDocument.schema_version, "0.6");
+  assert.equal(restoredDocument.settings.behavior_observation_enabled, false);
+  assert.deepEqual(restoredDocument.memories, [{
+    ...document.memories[0],
+    confidence_semantics: "explicit_user_assertion",
+  }]);
   assert.equal(await fs.access(`${destinationPath}.lock`).then(() => true, () => false), false);
 });
 
@@ -147,6 +153,6 @@ test("旧版 0.1 候选经加密恢复后按兼容规则标记为需重新观察
   await createEncryptedMemoryBackup({ sourcePath, backupPath, passphrase: PASSPHRASE });
   await restoreEncryptedMemoryBackup({ backupPath, destinationPath, passphrase: PASSPHRASE });
   const restored = JSON.parse(await fs.readFile(destinationPath, "utf8"));
-  assert.equal(restored.schema_version, "0.2");
+  assert.equal(restored.schema_version, "0.6");
   assert.equal(restored.memories[0].legacy_requires_reobservation, true);
 });

@@ -41,20 +41,23 @@ function stateProperties(device) {
 }
 
 function actionCapabilities(device) {
+  let actions;
   switch (device.domain) {
     case "light":
-      return {
+      actions = {
         turn_on: { parameters: {} },
         turn_off: { parameters: {} },
         set_brightness: { parameters: { brightness: { type: "integer", minimum: 0, maximum: 100, unit: "percent" } } },
       };
+      break;
     case "switch":
-      return {
+      actions = {
         turn_on: { parameters: {} },
         turn_off: { parameters: {} },
       };
+      break;
     case "climate":
-      return {
+      actions = {
         turn_on: { parameters: {} },
         turn_off: { parameters: {} },
         set_temperature: {
@@ -68,20 +71,36 @@ function actionCapabilities(device) {
           },
         },
       };
+      break;
     case "cover":
-      return {
+      actions = {
         open: { parameters: {} },
         close: { parameters: {} },
         set_position: { parameters: { position: { type: "integer", minimum: 0, maximum: 100, unit: "percent" } } },
       };
+      break;
     case "lock":
-      return {
+      actions = {
         lock: { parameters: {} },
         unlock: { parameters: {}, confirmation_required: true },
       };
+      break;
     default:
-      return {};
+      actions = {};
   }
+
+  const observed = device.capabilities?.actions;
+  if (!observed) return actions;
+  return Object.fromEntries(Object.entries(actions).flatMap(([action, specification]) => {
+    const evidence = observed[action];
+    if (evidence?.supported === false) return [];
+    return [[action, {
+      ...specification,
+      supported: evidence?.supported ?? null,
+      ...(evidence?.source ? { support_source: evidence.source } : {}),
+      ...(evidence?.evidence ? { support_evidence: evidence.evidence } : {}),
+    }]];
+  }));
 }
 
 /**

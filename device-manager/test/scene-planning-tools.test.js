@@ -9,12 +9,15 @@ import { MockHomeAssistant } from "../src/mock-ha.js";
 import { createScenePlanningTools } from "../src/scene-planning-tools.js";
 import { createDeviceToolRuntime } from "../src/tools.js";
 
-async function makeFixture(t, { climateAttributes = null } = {}) {
+async function makeFixture(t, { climateAttributes = null, lightAttributes = null, lightCapabilities = null } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lt-scene-plan-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
 
   const store = new PreferenceMemoryStore({ filePath: path.join(directory, "preferences.json") });
   const homeAssistant = new MockHomeAssistant();
+  const light = homeAssistant.devices.get("light.living_room");
+  if (lightAttributes) light.attributes = { ...light.attributes, ...lightAttributes };
+  if (lightCapabilities) light.capabilities = lightCapabilities;
   const runtime = createDeviceToolRuntime(homeAssistant);
   const deviceRuntime = climateAttributes
     ? {
@@ -63,7 +66,7 @@ test("睡眠场景把已确认卧室温度偏好放入建议计划，但不执�
   assert.equal(homeAssistant.getAuditLog().length, beforeAudit);
 });
 
-test("个性化场景必须收到匹配口令，执行前重校验，执行后逐项回读并防止重放", async (t) => {
+test("个性化场景必须收到自然语言确认标记，执行前重校验，执行后逐项回读并防止重放", async (t) => {
   const { homeAssistant, runtime, store, tools } = await makeFixture(t);
   await store.saveExplicitPreference({
     memory_type: "comfort_temperature_c",
@@ -76,11 +79,11 @@ test("个性化场景必须收到匹配口令，执行前重校验，执行后�
   const beforeAudit = homeAssistant.getAuditLog().length;
   const rejected = await tools.execute_scene_plan({
     plan_id: plan.plan_id,
-    confirmation_phrase: "确认执行方案 wrong-plan-id",
+    user_confirmed: false,
   });
 
   assert.equal(plan.success, true);
-  assert.match(plan.confirmation_phrase, new RegExp(`^确认执行方案 ${plan.plan_id}$`));
+  assert.equal(Object.hasOwn(plan, "confirmation_phrase"), false);
   assert.equal(rejected.success, false);
   assert.equal(rejected.error.code, "CONFIRMATION_REQUIRED");
   assert.equal(runtime.invoke("get_state", { device_id: "climate.bedroom" }).device.attributes.temperature, 26);
@@ -88,7 +91,7 @@ test("个性化场景必须收到匹配口令，执行前重校验，执行后�
 
   const executed = await tools.execute_scene_plan({
     plan_id: plan.plan_id,
-    confirmation_phrase: plan.confirmation_phrase,
+    user_confirmed: true,
   });
   assert.equal(executed.success, true);
   assert.equal(executed.confirmation_verified, true);
@@ -105,7 +108,7 @@ test("个性化场景必须收到匹配口令，执行前重校验，执行后�
 
   const replay = await tools.execute_scene_plan({
     plan_id: plan.plan_id,
-    confirmation_phrase: plan.confirmation_phrase,
+    user_confirmed: true,
   });
   assert.equal(replay.success, false);
   assert.equal(replay.error.code, "PLAN_NOT_FOUND_OR_EXPIRED");
@@ -130,7 +133,7 @@ test("确认前偏好或设备条件变化时废弃旧计划且不执行", async
 
   const result = await tools.execute_scene_plan({
     plan_id: plan.plan_id,
-    confirmation_phrase: plan.confirmation_phrase,
+    user_confirmed: true,
   });
 
   assert.equal(result.success, false);
@@ -158,7 +161,7 @@ test("场景计划超过十分钟后不能执行", async (t) => {
 
   const result = await tools.execute_scene_plan({
     plan_id: plan.plan_id,
-    confirmation_phrase: plan.confirmation_phrase,
+    user_confirmed: true,
   });
 
   assert.equal(result.success, false);
@@ -186,6 +189,177 @@ test("没有已确认偏好时保留场景默认值，待确认候选不会用�
   assert.equal(plan.success, true);
   assert.equal(temperatureStep.parameters.temperature, 26);
   assert.equal(plan.temperature_adjustments[0].status, "NO_CONFIRMED_PREFERENCE");
+});
+
+test("已确认温度与新推断偏好冲突时不创建场景计划，并返回候选供 OpenClaw 询问", async (t) => {
+  const { homeAssistant, store, tools } = await makeFixture(t);
+  await store.saveExplicitPreference({
+    memory_type: "comfort_temperature_c",
+    value: 24,
+    room_id: "bedroom",
+    user_explicit_request: true,
+  });
+  await store.setDeviceActionObservationConsent({ enabled: true, user_explicit_confirmation: true });
+  await store.proposeInferredCandidate({
+    memory_type: "comfort_temperature_c",
+    value: 26,
+    room_id: "bedroom",
+    observation_scope: "device_action",
+    event_id: "conflicting-bedroom-temperature",
+    observation_date: "2026-09-21",
+    confidence: 0.9,
+    consent_to_observe: true,
+  });
+  const beforeAudit = homeAssistant.getAuditLog().length;
+
+  const result = await tools.plan_scene({ scene_id: "sleep" });
+
+  assert.equal(result.success, false);
+  assert.equal(result.execution_performed, false);
+  assert.equal(result.error.code, "PREFERENCE_CONFLICT");
+  assert.equal(result.error.requires_user_resolution, true);
+  assert.deepEqual(result.error.conflicts[0].candidates.map(({ value }) => value), [24, 26]);
+  assert.equal(Object.hasOwn(result, "plan_id"), false);
+  assert.equal(homeAssistant.getAuditLog().length, beforeAudit);
+});
+
+test("预览后偏好变成冲突时，执行前拒绝并返回冲突值", async (t) => {
+  const { homeAssistant, store, tools } = await makeFixture(t);
+  await store.saveExplicitPreference({
+    memory_type: "comfort_temperature_c",
+    value: 24,
+    room_id: "bedroom",
+    user_explicit_request: true,
+  });
+  const plan = await tools.plan_scene({ scene_id: "sleep" });
+  await store.setDeviceActionObservationConsent({ enabled: true, user_explicit_confirmation: true });
+  await store.proposeInferredCandidate({
+    memory_type: "comfort_temperature_c",
+    value: 26,
+    room_id: "bedroom",
+    observation_scope: "device_action",
+    event_id: "conflict-after-preview",
+    observation_date: "2026-09-21",
+    confidence: 0.9,
+    consent_to_observe: true,
+  });
+  const beforeAudit = homeAssistant.getAuditLog().length;
+
+  const result = await tools.execute_scene_plan({ plan_id: plan.plan_id, user_confirmed: true });
+
+  assert.equal(result.success, false);
+  assert.equal(result.execution_performed, false);
+  assert.equal(result.error.code, "PREFERENCE_CONFLICT");
+  assert.deepEqual(result.error.conflicts[0].candidates.map(({ value }) => value), [24, 26]);
+  assert.equal(homeAssistant.getAuditLog().length, beforeAudit);
+});
+
+test("回家场景把已确认客厅亮度偏好放入建议计划，但不提前控制设备", async (t) => {
+  const { homeAssistant, runtime, store, tools } = await makeFixture(t);
+  await store.saveExplicitPreference({
+    memory_type: "comfort_brightness_pct",
+    value: 65,
+    room_id: "living_room",
+    user_explicit_request: true,
+  });
+
+  const beforeState = runtime.invoke("get_state", { device_id: "light.living_room" });
+  const beforeAudit = homeAssistant.getAuditLog().length;
+  const plan = await tools.plan_scene({ scene_id: "home" });
+  const brightnessStep = plan.steps.find((step) => step.action === "set_brightness");
+  const afterState = runtime.invoke("get_state", { device_id: "light.living_room" });
+
+  assert.equal(plan.success, true);
+  assert.equal(plan.execution_performed, false);
+  assert.equal(brightnessStep.parameters.brightness, 65);
+  assert.equal(plan.brightness_adjustments[0].status, "SUGGESTED");
+  assert.equal(plan.brightness_adjustments[0].configured_brightness_pct, 70);
+  assert.equal(plan.brightness_adjustments[0].applied_to_proposal, true);
+  assert.equal(beforeState.device.attributes.brightness, 0);
+  assert.equal(afterState.device.attributes.brightness, 0);
+  assert.equal(homeAssistant.getAuditLog().length, beforeAudit);
+});
+
+test("回家场景执行时使用已确认亮度，二次规划发现偏好变化则拒绝旧计划", async (t) => {
+  const { homeAssistant, runtime, store, tools } = await makeFixture(t);
+  await store.saveExplicitPreference({
+    memory_type: "comfort_brightness_pct",
+    value: 65,
+    room_id: "living_room",
+    user_explicit_request: true,
+  });
+
+  const plan = await tools.plan_scene({ scene_id: "home" });
+  const executed = await tools.execute_scene_plan({ plan_id: plan.plan_id, user_confirmed: true });
+
+  assert.equal(executed.success, true);
+  assert.equal(executed.planned_brightness_pct, 65);
+  assert.equal(executed.verification.find((entry) => entry.device_id === "light.living_room").verified, true);
+  assert.equal(runtime.invoke("get_state", { device_id: "light.living_room" }).device.attributes.brightness, 65);
+  assert.equal(homeAssistant.getAuditLog().find((entry) => entry.device_id === "light.living_room").parameters.brightness, 65);
+
+  const stalePlan = await tools.plan_scene({ scene_id: "home" });
+  await store.saveExplicitPreference({
+    memory_type: "comfort_brightness_pct",
+    value: 55,
+    room_id: "living_room",
+    user_explicit_request: true,
+  });
+  const auditCount = homeAssistant.getAuditLog().length;
+  const staleResult = await tools.execute_scene_plan({ plan_id: stalePlan.plan_id, user_confirmed: true });
+
+  assert.equal(staleResult.success, false);
+  assert.equal(staleResult.error.code, "PLAN_STALE");
+  assert.equal(staleResult.execution_performed, false);
+  assert.equal(staleResult.error.current_steps.find((step) => step.action === "set_brightness").parameters.brightness, 55);
+  assert.equal(staleResult.error.current_brightness_adjustments[0].suggested_brightness_pct, 55);
+  assert.equal(homeAssistant.getAuditLog().length, auditCount);
+});
+
+test("没有确认的灯光偏好时保留回家场景默认亮度 70", async (t) => {
+  const { tools } = await makeFixture(t);
+  const plan = await tools.plan_scene({ scene_id: "home" });
+
+  assert.equal(plan.steps.find((step) => step.action === "set_brightness").parameters.brightness, 70);
+  assert.equal(plan.brightness_adjustments[0].status, "NO_CONFIRMED_PREFERENCE");
+});
+
+test("灯具能力未知、不支持或离线时不应用已确认亮度偏好", async (t) => {
+  const cases = [
+    {
+      name: "unknown",
+      fixture: { lightAttributes: { brightness: undefined } },
+      status: "DEVICE_CAPABILITY_UNKNOWN",
+    },
+    {
+      name: "unsupported",
+      fixture: { lightCapabilities: { actions: { set_brightness: { supported: false } } } },
+      status: "DEVICE_ACTION_UNSUPPORTED",
+    },
+    {
+      name: "offline",
+      fixture: {},
+      status: "DEVICE_UNAVAILABLE",
+      makeUnavailable: true,
+    },
+  ];
+
+  for (const entry of cases) {
+    const { homeAssistant, store, tools } = await makeFixture(t, entry.fixture);
+    await store.saveExplicitPreference({
+      memory_type: "comfort_brightness_pct",
+      value: 65,
+      room_id: "living_room",
+      user_explicit_request: true,
+    });
+    if (entry.makeUnavailable) homeAssistant.devices.get("light.living_room").available = false;
+
+    const plan = await tools.plan_scene({ scene_id: "home" });
+
+    assert.equal(plan.steps.find((step) => step.action === "set_brightness").parameters.brightness, 70);
+    assert.equal(plan.brightness_adjustments[0].status, entry.status, entry.name);
+    assert.equal(plan.brightness_adjustments[0].applied_to_proposal, false, entry.name);
+  }
 });
 
 test("超出设备温控范围的已确认偏好只报告冲突，不改写建议步骤", async (t) => {

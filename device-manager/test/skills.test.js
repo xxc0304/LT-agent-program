@@ -10,7 +10,7 @@ const skills = [
   {
     name: "device-status",
     file: "device-manager/agent-workspace/skills/device-status/SKILL.md",
-    required: ["list_devices", "get_state"],
+    required: ["list_devices", "get_state", "diagnostic_shared_infrastructure_suspected", "可能性提示"],
   },
   {
     name: "device-control",
@@ -30,12 +30,17 @@ const skills = [
   {
     name: "scene-control",
     file: "device-manager/agent-workspace/skills/scene-control/SKILL.md",
-    required: ["plan_scene", "execute_scene_plan", "confirmation_phrase", "confirmed", "绝不控制设备", "home", "sleep", "away"],
+    required: ["plan_scene", "execute_scene_plan", "user_confirmed: true", "不要展示工具 ID", "自然语言", "绝不控制设备", "home", "sleep", "away"],
+  },
+  {
+    name: "multi-agent-demo",
+    file: "device-manager/agent-workspace/skills/multi-agent-demo/SKILL.md",
+    required: ["run_mock_agent_chain_demo", "learning_departure", "Mock HA", "合成样例", "dispatch_agent_event"],
   },
   {
     name: "fault-diagnosis",
     file: "device-manager/agent-workspace/skills/fault-diagnosis/SKILL.md",
-    required: ["diagnose_device", "get_device_events"],
+    required: ["diagnose_device", "get_device_events", "diagnostic_shared_infrastructure_cleared", "不要断言每台设备损坏"],
   },
   {
     name: "household-preferences",

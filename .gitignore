@@ -29,6 +29,7 @@ learning-behavior/outputs/2026-09-26-annotation-review/
 **/family-memory*.json.lock
 **/family-memory*.json.*.tmp
 **/family-memory*.json.*.backup
+**/family-memory*.sqlite*
 **/memory-data/
 
 # Runtime conversation/memory snapshots are local data, not agent source or fixtures

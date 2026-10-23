@@ -94,6 +94,35 @@ test("未到时间、超出窗口、周末或无已确认偏好时不生成到�
   assert.equal((await weekend.poll({ time_zone: "Asia/Tokyo" })).status, "NOT_DUE");
 });
 
+test("到期扫描发现作息记忆冲突时显式返回冲突，不静默当作未到期", async (t) => {
+  const store = await createStore(t);
+  await saveBedtime(store);
+  await store.setObservationConsent({ enabled: true, user_explicit_confirmation: true });
+  await store.proposeInferredCandidate({
+    memory_type: "sleep_time",
+    value: "23:00",
+    event_id: "routine-conflict-at-trigger",
+    observation_date: "2026-09-30",
+    time_zone: "Asia/Shanghai",
+    day_type: "weekday",
+    confidence: 0.9,
+    consent_to_observe: true,
+  });
+  const evaluator = createRoutineDueEvaluator({
+    store,
+    scheduleAuthorized: true,
+    clock: () => Date.parse("2026-09-30T14:30:30.000Z"),
+    triggerWindowMs: 60_000,
+  });
+
+  const result = await evaluator.poll({ time_zone: "Asia/Shanghai" });
+
+  assert.equal(result.status, "PREFERENCE_CONFLICT");
+  assert.equal(result.requires_user_resolution, true);
+  assert.deepEqual(result.conflicts[0].candidates.map(({ value }) => value), ["22:30", "23:00"]);
+  assert.deepEqual(result.events, []);
+});
+
 test("到期扫描使用记忆存储的有效性检查，不触发已过期的偏好", async (t) => {
   let now = Date.parse("2026-09-30T13:00:00.000Z");
   const store = await createStore(t, { clock: () => now });
