@@ -68,3 +68,11 @@ npm run demo
 `trustedOccupancySourceAgents` 必须由受信任运行时配置；单凭 Event 内的来源字符串不能在真实系统里证明身份。真实联调时还须由 HA/MQTT 接入层认证事件来源，当前字段白名单只实现本地规则门槛，不是密码学认证。
 
 这不等于真实家庭节能已经联调完成。真实事件源、实际 HA 实体/区域映射、设备组确认的白名单与最终跨组契约，仍需要其他组提供并联调；当前演示不会操作真实设备。
+
+## 能耗画像、预算建议与效果比较 Mock MVP
+
+`EnergySavingAgent.analyzeEnergyUsage(input)` 可分析输入的区间电量、设备/区域/时段画像、显式基线异常、分时电费与预算状态；策略只给人工建议，不创建设备 Task。`evaluateEnergyEffect(input)` 只对同设备、同长度且完整对齐的前后窗口报告观察差值，不作因果归因。完整字段和限制见 [`../docs/energy-operations-and-maintenance-mock-mvp-v0.1.md`](../docs/energy-operations-and-maintenance-mock-mvp-v0.1.md)。
+
+设备管家 OpenClaw 插件现注册 `analyze_energy_usage` 和 `evaluate_energy_effect` 两个工具，可由对话模型根据用户请求选择调用；数据仍需在调用中明确提供，目前并未从真实 HA/电表采集。完整工具范围见 [`../docs/energy-operations-openclaw-tools-and-maintenance-store-v0.1.md`](../docs/energy-operations-openclaw-tools-and-maintenance-store-v0.1.md)。
+
+在仓库根目录运行 `npm --prefix energy-saving run demo:operations` 可生成标注为 MOCK 的综合演示报告到 `tmp/energy-operations/operations-report.json`。没有接入真实计量数据前，不可将示例 kWh、电费差值或异常判断表述为真实家庭效果。

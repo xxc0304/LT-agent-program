@@ -483,3 +483,41 @@ test("无设备状态时拒绝生成控制任务", async () => {
   assert.equal(result.status, "FAILED");
   assert.equal(result.error.code, "DEVICE_STATE_UNAVAILABLE");
 });
+
+test("节能 Agent 可分析区间能耗并给建议，但不创建控制任务", () => {
+  const agent = new EnergySavingAgent();
+  const report = agent.analyzeEnergyUsage({
+    readings: [{ device_id: "plug.study", area: "study", recorded_at: "2026-10-16T10:00:00Z", interval_kwh: 1 }],
+    tariff: { currency: "CNY", segments: [{ name: "peak", tier: "peak", start: "00:00", end: "23:59", price_per_kwh: 1 }] },
+    budget: { period_kwh: 0.8 },
+  });
+
+  assert.equal(report.agent_id, "energy-saving");
+  assert.equal(report.analysis.summary.total_kwh, 1);
+  assert.equal(report.strategy.budgets[0].status, "EXCEEDED");
+  assert.equal(report.side_effects.device_tasks_created, false);
+  assert.equal(report.side_effects.device_control_performed, false);
+});
+
+test("节能 Agent 可比较前后窗口，但不将差值解释为因果节能", () => {
+  const agent = new EnergySavingAgent();
+  const baseline = {
+    start_at: "2026-10-15T00:00:00.000Z",
+    end_at: "2026-10-15T00:15:00.000Z",
+    readings: [{ device_id: "meter.room", recorded_at: "2026-10-15T00:15:00.000Z", interval_kwh: 0.5 }],
+  };
+  const followUp = {
+    start_at: "2026-10-16T00:00:00.000Z",
+    end_at: "2026-10-16T00:15:00.000Z",
+    readings: [{ device_id: "meter.room", recorded_at: "2026-10-16T00:15:00.000Z", interval_kwh: 0.4 }],
+  };
+  const comparison = agent.evaluateEnergyEffect({
+    baseline,
+    follow_up: followUp,
+    device_ids: ["meter.room"],
+    interval_minutes: 15,
+  });
+
+  assert.equal(comparison.observed_change.baseline_minus_follow_up_kwh, 0.1);
+  assert.equal(comparison.causality, "NOT_ESTABLISHED_BY_BEFORE_AFTER_COMPARISON");
+});

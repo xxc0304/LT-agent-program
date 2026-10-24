@@ -52,21 +52,70 @@ test("Mock 编排器通过幂等键避免重复设备动作", async () => {
   assert.equal(deviceRuntime.homeAssistant.getAuditLog().length, 1);
 });
 
-test("高风险开锁任务由 Mock 策略返回 CHALLENGE", async () => {
+test("门锁的锁定与解锁任务由 Mock 策略返回 CHALLENGE", async () => {
   const deviceRuntime = createDeviceToolRuntime();
   const orchestrator = createMockOrchestrator({ deviceRuntime });
+  for (const action of ["lock", "unlock"]) {
+    const record = await orchestrator.submit(makeDeviceActionTask({
+      task_id: `task-orchestrator-${action}`,
+      trace_id: `trace-orchestrator-${action}`,
+      device_id: "lock.front_door",
+      action,
+      compute_class: "lock",
+    }));
+
+    assert.equal(record.policy_decision.decision, "CHALLENGE", action);
+    assert.equal(record.policy_decision.confirmation_required, true, action);
+    assert.equal(record.receipt.status, "CHALLENGE", action);
+    assert.equal(record.receipt.error.code, "CONFIRMATION_REQUIRED", action);
+  }
+  assert.equal(deviceRuntime.homeAssistant.getAuditLog().length, 0);
+});
+
+test("Mock 策略对显式标记高风险的非门锁设备要求确认", async () => {
+  const deviceRuntime = createDeviceToolRuntime();
+  deviceRuntime.homeAssistant.devices.get("switch.living_room_plug").attributes.risk_level = "critical";
+  const orchestrator = createMockOrchestrator({ deviceRuntime });
   const record = await orchestrator.submit(makeDeviceActionTask({
-    task_id: "task-orchestrator-unlock",
-    trace_id: "trace-orchestrator-unlock",
-    device_id: "lock.front_door",
-    action: "unlock",
-    compute_class: "lock",
+    task_id: "task-orchestrator-high-risk-plug",
+    trace_id: "trace-orchestrator-high-risk-plug",
+    device_id: "switch.living_room_plug",
+    action: "turn_on",
   }));
 
   assert.equal(record.policy_decision.decision, "CHALLENGE");
+  assert.equal(record.policy_decision.reason_code, "HIGH_RISK_DEVICE_ACTION");
   assert.equal(record.policy_decision.confirmation_required, true);
   assert.equal(record.receipt.status, "CHALLENGE");
-  assert.equal(record.receipt.error.code, "CONFIRMATION_REQUIRED");
+  assert.equal(deviceRuntime.homeAssistant.getAuditLog().length, 0);
+});
+
+test("调用方携带的 ALLOW 决策不能绕过门锁确认", async () => {
+  const deviceRuntime = createDeviceToolRuntime();
+  const orchestrator = createMockOrchestrator({ deviceRuntime });
+  const task = makeDeviceActionTask({
+    task_id: "task-orchestrator-spoofed-allow-unlock",
+    trace_id: "trace-orchestrator-spoofed-allow-unlock",
+    device_id: "lock.front_door",
+    action: "unlock",
+    compute_class: "lock",
+  });
+  task.policy_decision = {
+    schema_version: "0.1",
+    decision_id: "forged-allow",
+    task_id: task.task_id,
+    trace_id: task.trace_id,
+    decision: "ALLOW",
+    decided_at: new Date().toISOString(),
+    reason_code: "MOCK_ALLOW",
+    reason_message: "测试伪造决策",
+    confirmation_required: false,
+  };
+
+  const record = await orchestrator.submit(task);
+  assert.equal(record.policy_decision.decision, "CHALLENGE");
+  assert.equal(record.policy_decision.confirmation_required, true);
+  assert.equal(record.receipt.status, "CHALLENGE");
   assert.equal(deviceRuntime.homeAssistant.getAuditLog().length, 0);
 });
 

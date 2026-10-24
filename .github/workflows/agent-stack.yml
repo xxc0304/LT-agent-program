@@ -1,0 +1,35 @@
+name: Linux Agent stack verification
+
+on:
+  push:
+    branches: [main, "codex/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install device-manager direct dependencies for Mock tests
+        run: npm install --no-save --package-lock=false --omit=peer --legacy-peer-deps --ignore-scripts
+        working-directory: device-manager
+
+      - name: Install orchestrator direct dependencies for Mock tests
+        run: npm install --no-save --package-lock=false --omit=peer --legacy-peer-deps --ignore-scripts
+        working-directory: multi-agent-orchestrator
+
+      - name: Run Linux local and Mock verification suite
+        run: node deployment/verify-agent-stack.mjs

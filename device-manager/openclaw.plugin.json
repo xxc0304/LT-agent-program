@@ -8,7 +8,29 @@
   },
   "configSchema": {
     "type": "object",
-    "properties": {},
+    "properties": {
+      "frontdoorAgentId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "memoryBackend": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "json"
+          },
+          {
+            "type": "string",
+            "const": "sqlite"
+          }
+        ]
+      },
+      "memoryDatabasePath": {
+        "type": "string",
+        "minLength": 1,
+        "description": "SQLite 家庭记忆库的绝对路径；仅当 memoryBackend 设置为 sqlite 时填写。"
+      }
+    },
     "additionalProperties": false
   },
   "contracts": {
@@ -20,15 +42,59 @@
       "diagnose_device",
       "get_device_events",
       "dispatch_agent_event",
+      "submit_agent_plan",
+      "resolve_agent_action_confirmation",
+      "list_pending_agent_action_confirmations",
+      "run_mock_agent_chain_demo",
+      "run_mock_household_memory_learning_demo",
+      "run_mock_maintenance_reminder_demo",
       "get_household_preference",
       "list_household_memories",
       "remember_household_preference",
-      "propose_household_memory_candidate",
+      "get_household_observation_consent",
+      "set_household_observation_consent",
+      "get_household_device_action_observation_consent",
+      "set_household_device_action_observation_consent",
+      "get_household_routine_reminder_consent",
+      "set_household_routine_reminder_consent",
       "confirm_household_memory_candidate",
       "preview_household_routine",
       "forget_household_memory",
+      "check_household_routine_reminders",
+      "start_household_routine_reminders",
+      "stop_household_routine_reminders",
+      "get_household_routine_reminder_status",
+      "list_household_routine_reminders",
+      "acknowledge_household_routine_reminder",
       "plan_scene",
-      "execute_scene_plan"
+      "execute_scene_plan",
+      "analyze_room_energy_adaptation",
+      "plan_room_energy_saving",
+      "execute_room_energy_saving_plan",
+      "record_room_energy_scenario_feedback",
+      "get_room_energy_adaptation_report",
+      "start_household_device_monitor",
+      "stop_household_device_monitor",
+      "get_household_device_monitor_status",
+      "discover_household_devices",
+      "list_household_device_inventory",
+      "review_household_device",
+      "analyze_energy_usage",
+      "evaluate_energy_effect",
+      "save_maintenance_schedule",
+      "get_device_maintenance_plan",
+      "record_device_maintenance_completed",
+      "check_maintenance_reminders",
+      "start_maintenance_reminders",
+      "stop_maintenance_reminders",
+      "get_maintenance_reminder_status",
+      "list_maintenance_reminders",
+      "archive_completed_maintenance_reminders",
+      "acknowledge_maintenance_reminder",
+      "snooze_maintenance_reminder",
+      "talk_to_device_manager",
+      "call_independent_agent",
+      "evaluate_energy_event_with_independent_agent"
     ]
   }
 }

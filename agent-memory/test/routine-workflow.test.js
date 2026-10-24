@@ -7,10 +7,11 @@ import test from "node:test";
 import { PreferenceMemoryStore } from "../src/memory-store.js";
 import { createRoutineMemoryWorkflow } from "../src/routine-workflow.js";
 
-async function createWorkflow(t) {
+async function createWorkflow(t, { consentEnabled = true } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lt-routine-workflow-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const store = new PreferenceMemoryStore({ filePath: path.join(directory, "memory.json") });
+  if (consentEnabled) await store.setObservationConsent({ enabled: true, user_explicit_confirmation: true });
   return { store, workflow: createRoutineMemoryWorkflow({ store }) };
 }
 
@@ -28,10 +29,11 @@ function routineEvent({ event_id, day, consent_to_observe = true, occurred_at, .
   };
 }
 
-test("没有明确观察同意或有效来源字段时不写入习惯候选", async (t) => {
-  const { workflow, store } = await createWorkflow(t);
+test("没有持久化的用户观察授权时不写入习惯候选", async (t) => {
+  const { workflow, store } = await createWorkflow(t, { consentEnabled: false });
   const noConsent = await workflow.observe(routineEvent({ event_id: "evt-no-consent", day: "2026-09-21", consent_to_observe: false }));
   assert.equal(noConsent.error.code, "MEMORY_CONSENT_REQUIRED");
+  await store.setObservationConsent({ enabled: true, user_explicit_confirmation: true });
 
   const invalidType = await workflow.observe(routineEvent({ event_id: "evt-wrong-type", day: "2026-09-21", event_type: "device_state_changed" }));
   assert.equal(invalidType.error.code, "UNSUPPORTED_EVENT_TYPE");
@@ -90,6 +92,39 @@ test("时间候选按周内/周末分组，且预览必须指定匹配时区", a
   assert.equal((await workflow.previewRoutine({ routine_type: "sleep_time", time_zone: "Asia/Tokyo" })).status, "NO_CONFIRMED_PREFERENCE");
 });
 
+test("作息偏好存在冲突时只返回候选，不生成提醒建议", async (t) => {
+  const { workflow, store } = await createWorkflow(t);
+  await store.saveExplicitPreference({
+    memory_type: "sleep_time",
+    value: "22:30",
+    time_zone: "Asia/Shanghai",
+    day_type: "weekday",
+    user_explicit_request: true,
+  });
+  await store.setObservationConsent({ enabled: true, user_explicit_confirmation: true });
+  await store.proposeInferredCandidate({
+    memory_type: "sleep_time",
+    value: "23:00",
+    event_id: "sleep-time-conflict",
+    observation_date: "2026-09-21",
+    time_zone: "Asia/Shanghai",
+    day_type: "weekday",
+    confidence: 0.9,
+    consent_to_observe: true,
+  });
+
+  const preview = await workflow.previewRoutine({
+    routine_type: "sleep_time",
+    day_type: "weekday",
+    time_zone: "Asia/Shanghai",
+  });
+
+  assert.equal(preview.status, "PREFERENCE_CONFLICT");
+  assert.equal(preview.suggestion, null);
+  assert.equal(preview.requires_user_resolution, true);
+  assert.deepEqual(preview.candidates.map(({ value }) => value), ["22:30", "23:00"]);
+});
+
 test("0.1 版未确认候选被保留但必须重新收集不同日期证据", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lt-routine-migration-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
@@ -117,6 +152,7 @@ test("0.1 版未确认候选被保留但必须重新收集不同日期证据", a
   const refused = await store.confirmCandidate("legacy-pending", { user_confirmed: true });
   assert.equal(refused.error.code, "CANDIDATE_REQUIRES_REOBSERVATION");
   const disk = JSON.parse(await fs.readFile(filePath, "utf8"));
-  assert.equal(disk.schema_version, "0.2");
+  assert.equal(disk.schema_version, "0.6");
+  assert.equal(disk.settings.behavior_observation_enabled, false);
   assert.equal(disk.memories[0].evidence_event_ids.length, 3);
 });

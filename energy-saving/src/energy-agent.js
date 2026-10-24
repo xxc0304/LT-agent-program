@@ -1,4 +1,7 @@
 import { validateIndependentOccupancyConfirmation } from "./occupancy-confirmation.js";
+import { analyzeEnergyConsumption } from "./energy-analysis.js";
+import { createEnergyStrategy } from "./energy-strategy.js";
+import { evaluateEnergyEffect } from "./energy-effectiveness.js";
 
 const CONTRACT_VERSION = "0.1";
 const AGENT_ID = "energy-saving";
@@ -186,13 +189,34 @@ export class EnergySavingAgent {
       agent_id: AGENT_ID,
       display_name: "节能 Agent",
       version: "0.1",
-      capabilities: ["energy_analysis", "device_action_planning"],
+      capabilities: ["energy_analysis", "consumption_profiling", "budget_advisory", "energy_effect_evaluation", "device_action_planning"],
       consumes: ["occupancy_changed", "home_mode_changed", "learning_behavior", "user_device_override"],
       produces: ["device_action"],
       execution_mode: "local",
       privacy_level: "family",
       direct_device_control: false,
     };
+  }
+
+  /** Analyze caller-supplied interval readings and return advisory strategy only. */
+  analyzeEnergyUsage(input = {}) {
+    const analysis = analyzeEnergyConsumption(input);
+    const strategy = createEnergyStrategy(analysis, { budget: input.budget ?? {} });
+    return {
+      schema_version: "energy-saving.operations/0.1",
+      agent_id: AGENT_ID,
+      analysis,
+      strategy,
+      side_effects: {
+        device_tasks_created: false,
+        device_control_performed: false,
+      },
+    };
+  }
+
+  /** Compare matching meter windows descriptively, without causal attribution. */
+  evaluateEnergyEffect(input = {}) {
+    return evaluateEnergyEffect(input);
   }
 
   /**

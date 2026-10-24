@@ -1,0 +1,83 @@
+{
+  "id": "platform-orchestrator",
+  "name": "家庭多 Agent 平台调度器",
+  "description": "为 OpenClaw 用户主对话提供可扩展的 Agent 注册、动态计划校验、多 Agent 调用、冲突检测和用户澄清入口。",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "frontdoorAgentId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalAgents": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "agent_id",
+            "name",
+            "capabilities"
+          ],
+          "properties": {
+            "agent_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": {
+              "type": "string"
+            },
+            "capabilities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "effect"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "effect": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "read_only"
+                      },
+                      {
+                        "type": "string",
+                        "const": "planning"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "additionalProperties": false
+  },
+  "contracts": {
+    "tools": [
+      "orchestrate_household_agents"
+    ]
+  }
+}

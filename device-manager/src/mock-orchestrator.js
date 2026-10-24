@@ -1,5 +1,6 @@
 import { createDeviceTaskRuntime } from "./task-runtime.js";
 import { createDeviceToolRuntime } from "./tools.js";
+import { getDeviceActionConfirmationPolicy } from "./action-confirmation-policy.js";
 
 const TARGET_AGENT = "device-manager";
 
@@ -172,10 +173,6 @@ function makePolicyDecision(task, decision, reason_code, reason_message, confirm
 }
 
 function evaluatePolicy(task, device, resourceStatus) {
-  if (task.policy_decision) return task.policy_decision;
-  if (task.action === "unlock") {
-    return makePolicyDecision(task, "CHALLENGE", "HIGH_RISK_UNLOCK", "开锁必须经过用户明确确认", true);
-  }
   if (task.data_level === "L3" && resourceStatus.data_zone !== "home_local") {
     return makePolicyDecision(task, "DENY", "L3_DATA_OUT_OF_HOME", "原始敏感数据不得离开家庭本地节点");
   }
@@ -185,6 +182,14 @@ function evaluatePolicy(task, device, resourceStatus) {
   if (!device.available) {
     return makePolicyDecision(task, "DENY", "DEVICE_OFFLINE", "目标设备当前离线");
   }
+  const confirmationPolicy = getDeviceActionConfirmationPolicy(device, task.action);
+  if (confirmationPolicy.required) {
+    if (task.policy_decision?.decision === "DENY") return task.policy_decision;
+    if (task.policy_decision?.decision === "CHALLENGE"
+      && task.policy_decision.confirmation_required === true) return task.policy_decision;
+    return makePolicyDecision(task, "CHALLENGE", confirmationPolicy.reason_code, confirmationPolicy.message, true);
+  }
+  if (task.policy_decision) return task.policy_decision;
   return makePolicyDecision(task, "ALLOW", "LOCAL_DEVICE_CONTROL", "本地设备控制允许执行");
 }
 

@@ -18,7 +18,12 @@ test("OpenClaw 记忆工具只读已确认偏好，写入/确认/删除均有显
     "get_household_preference",
     "list_household_memories",
     "remember_household_preference",
-    "propose_household_memory_candidate",
+    "get_household_observation_consent",
+    "set_household_observation_consent",
+    "get_household_device_action_observation_consent",
+    "set_household_device_action_observation_consent",
+    "get_household_routine_reminder_consent",
+    "set_household_routine_reminder_consent",
     "confirm_household_memory_candidate",
     "preview_household_routine",
     "forget_household_memory",
@@ -39,6 +44,33 @@ test("OpenClaw 记忆工具只读已确认偏好，写入/确认/删除均有显
   });
   assert.equal(saved.memory.value, 26);
   assert.equal((await tools.get_household_preference({ memory_type: "comfort_temperature_c", room_id: "bedroom" })).value, 26);
+  const consent = await tools.set_household_observation_consent({ enabled: true, user_explicit_confirmation: true });
+  assert.equal(consent.enabled, true);
+  assert.equal((await tools.get_household_observation_consent()).enabled, true);
+  assert.equal((await tools.get_household_device_action_observation_consent()).enabled, false);
+  const deniedDeviceConsent = await tools.set_household_device_action_observation_consent({
+    enabled: true,
+    user_explicit_confirmation: false,
+  });
+  assert.equal(deniedDeviceConsent.error.code, "EXPLICIT_CONSENT_REQUIRED");
+  const enabledDeviceConsent = await tools.set_household_device_action_observation_consent({
+    enabled: true,
+    user_explicit_confirmation: true,
+  });
+  assert.equal(enabledDeviceConsent.enabled, true);
+  assert.equal((await tools.get_household_routine_reminder_consent()).enabled, false,
+    "提醒授权独立于作息观察授权，初始关闭");
+  const deniedReminderConsent = await tools.set_household_routine_reminder_consent({
+    enabled: true,
+    user_explicit_confirmation: false,
+  });
+  assert.equal(deniedReminderConsent.error.code, "EXPLICIT_CONSENT_REQUIRED");
+  const reminderConsent = await tools.set_household_routine_reminder_consent({
+    enabled: true,
+    user_explicit_confirmation: true,
+  });
+  assert.equal(reminderConsent.enabled, true);
+  assert.match(reminderConsent.note, /只有.*配置/);
 
   for (let index = 1; index <= 3; index += 1) {
     await tools.propose_household_memory_candidate({
@@ -78,7 +110,7 @@ test("OpenClaw 记忆工具只读已确认偏好，写入/确认/删除均有显
   assert.equal(await tools.get_household_preference({ memory_type: "comfort_temperature_c", room_id: "bedroom" }), null);
 });
 
-test("OpenClaw 作息工具自行计算家庭本地日期，并拒绝未授权或不带时区的观察", async (t) => {
+test("内部候选适配器自行计算家庭本地日期，并拒绝未授权或不带时区的观察", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lt-memory-routine-tool-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const store = new PreferenceMemoryStore({ filePath: path.join(directory, "preferences.json") });
@@ -96,6 +128,8 @@ test("OpenClaw 作息工具自行计算家庭本地日期，并拒绝未授权�
   const noConsent = await tools.propose_household_memory_candidate({ ...observation, consent_to_observe: false });
   assert.equal(noConsent.error.code, "MEMORY_CONSENT_REQUIRED");
 
+  await tools.set_household_observation_consent({ enabled: true, user_explicit_confirmation: true });
+
   const noOffset = await tools.propose_household_memory_candidate({
     ...observation,
     occurred_at: "2026-09-20T16:34:00",
@@ -108,4 +142,37 @@ test("OpenClaw 作息工具自行计算家庭本地日期，并拒绝未授权�
   assert.equal(accepted.observed_time_bucket, "22:30");
   assert.equal(accepted.memory.status, "observing");
   assert.equal(accepted.memory.observation_count, 1);
+});
+
+test("OpenClaw 偏好查询返回冲突旧值和新候选供对话澄清", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lt-memory-conflict-tools-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const store = new PreferenceMemoryStore({ filePath: path.join(directory, "preferences.json") });
+  const tools = createHouseholdMemoryTools(store);
+  await tools.remember_household_preference({
+    memory_type: "comfort_temperature_c",
+    value: 24,
+    room_id: "bedroom",
+    user_explicit_request: true,
+  });
+  await tools.set_household_device_action_observation_consent({ enabled: true, user_explicit_confirmation: true });
+  await store.proposeInferredCandidate({
+    memory_type: "comfort_temperature_c",
+    value: 26,
+    room_id: "bedroom",
+    observation_scope: "device_action",
+    event_id: "tool-conflict-001",
+    observation_date: "2026-09-21",
+    confidence: 0.9,
+    consent_to_observe: true,
+  });
+
+  const result = await tools.get_household_preference({
+    memory_type: "comfort_temperature_c",
+    room_id: "bedroom",
+  });
+
+  assert.equal(result.status, "conflict_review");
+  assert.equal(result.requires_user_resolution, true);
+  assert.deepEqual(result.candidates.map(({ value }) => value), [24, 26]);
 });

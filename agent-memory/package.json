@@ -7,6 +7,8 @@
   "scripts": {
     "demo": "node src/demo-routine-workflow.js",
     "backup": "node src/backup-cli.js",
+    "db:backup": "node src/sqlite-backup-cli.js",
+    "db:import-json": "node src/import-json-to-sqlite.js",
     "test": "node --test"
   },
   "engines": {

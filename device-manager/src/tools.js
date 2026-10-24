@@ -40,7 +40,7 @@ export const DEVICE_TOOL_DEFINITIONS = [
   },
   {
     name: "control_device",
-    description: "控制设备。开锁等高风险操作需要 confirmed=true。",
+    description: "请求控制一个设备。对话里的口语或罕见说法由你先结合上下文和 list_devices 理解；仅当设备、动作及参数指向唯一且明确的单设备即时操作时调用本工具。普通灯、开关/插座、空调和窗帘操作默认不需二次确认；门锁操作、HA 标记为高风险的设备仍需确认。场景、多设备、复杂/跨 Agent 计划或未预授权自动化请使用对应计划/事件工具并走确认流程。confirmed 参数不会绕过策略。目标/动作不明确时先追问；证据缺失、过期或设备状态不确定时不执行。",
     inputSchema: Type.Object(
       {
         device_id: Type.String(),
@@ -67,7 +67,7 @@ export const DEVICE_TOOL_DEFINITIONS = [
         confirmed: Type.Optional(
           Type.Boolean({
             default: false,
-            description: "用户是否已经明确确认高风险操作。",
+            description: "兼容字段。该布尔值不构成用户确认，不能用于绕过 OpenClaw 确认流程。",
           }),
         ),
         task_id: Type.Optional(Type.String({ description: "可选的标准 Task ID，用于审计关联。" })),
@@ -79,7 +79,7 @@ export const DEVICE_TOOL_DEFINITIONS = [
   },
   {
     name: "run_scene",
-    description: "固定参数场景执行器。面向用户的场景请求必须先调用 plan_scene 展示计划，并在用户后续原样确认后调用 execute_scene_plan；不要用 run_scene 绕过确认或执行个性化温度。",
+    description: "固定参数场景执行器。面向用户的场景请求必须先调用 plan_scene 展示计划，并在用户后续独立消息明确同意后调用 execute_scene_plan；不要向用户暴露内部计划 ID/口令，也不要用 run_scene 绕过确认或执行个性化温度。",
     inputSchema: Type.Object(
       {
         scene_id: Type.Union([
@@ -104,11 +104,11 @@ export const DEVICE_TOOL_DEFINITIONS = [
   },
   {
     name: "get_device_events",
-    description: "查询设备管家产生的标准设备事件和动作审计事件。",
+    description: "查询设备管家产生的标准设备事件和动作审计事件，可查看单设备诊断及多设备共同基础设施提示（diagnostic_shared_infrastructure_suspected / cleared）等诊断闭环。",
     inputSchema: Type.Object(
       {
         device_id: Type.Optional(Type.String({ description: "可选的设备实体 ID。" })),
-        event_type: Type.Optional(Type.String({ description: "可选的事件类型，例如 action_executed 或 diagnostic_alert。" })),
+        event_type: Type.Optional(Type.String({ description: "可选的事件类型，例如 action_executed、diagnostic_alert、diagnostic_recovered 或 diagnostic_tracking_ended。" })),
         trace_id: Type.Optional(Type.String({ description: "可选的全链路追踪 ID。" })),
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200, description: "最多返回的事件数量，默认 50。" })),
       },
