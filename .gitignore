@@ -35,3 +35,15 @@ learning-behavior/outputs/2026-09-26-annotation-review/
 # Runtime conversation/memory snapshots are local data, not agent source or fixtures
 /device-manager/agent-workspace/memory/.dreams/
 /device-manager/agent-workspace/memory/dreaming/
+
+# Local generated deployment archives and runtime caches
+/output/
+**/node-compile-cache/
+
+# OpenClaw-generated workspace snapshots and user-specific bootstrap notes
+**/openclaw-workspace-state.json
+/device-manager/agent-workspace/USER.md
+/openclaw-agents/*/USER.md
+
+# Local first-pass annotation draft; keep unreviewed labels out of Git
+/learning-behavior/ANNOTATION_FIRST_PASS_DRAFT.jsonl

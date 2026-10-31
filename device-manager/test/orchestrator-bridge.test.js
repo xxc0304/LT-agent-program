@@ -184,7 +184,7 @@ test("内部可信入口未配置来源白名单时拒绝事件", async () => {
   assert.equal(homeAssistant.getAuditLog().length, 0);
 });
 
-test("候选计划中的伪造占用事件不会污染运行中的节能 Agent 可信传感器缓存", async () => {
+test("候选计划中的伪造占用事件不会污染运行中的能源管家可信传感器缓存", async () => {
   const homeAssistant = new MockHomeAssistant();
   const deviceRuntime = createDeviceToolRuntime(homeAssistant);
   const bridge = createOrchestratorBridge(deviceRuntime, {

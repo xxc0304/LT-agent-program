@@ -434,7 +434,7 @@ test("home 和 sleep 模式变化不会误触发全屋关机", () => {
   assert.equal(result.decisions[0].reason, "ENERGY_SHUTDOWN_ONLY_FOR_AWAY_MODE");
 });
 
-test("节能 Agent 只规划任务，设备管家负责实际执行和状态回读", async () => {
+test("能源管家只规划任务，设备管家负责实际执行和状态回读", async () => {
   const homeAssistant = new MockHomeAssistant();
   const deviceRuntime = createDeviceToolRuntime(homeAssistant);
   const taskRuntime = createDeviceTaskRuntime(deviceRuntime);
@@ -484,7 +484,7 @@ test("无设备状态时拒绝生成控制任务", async () => {
   assert.equal(result.error.code, "DEVICE_STATE_UNAVAILABLE");
 });
 
-test("节能 Agent 可分析区间能耗并给建议，但不创建控制任务", () => {
+test("能源管家可分析区间能耗并给建议，但不创建控制任务", () => {
   const agent = new EnergySavingAgent();
   const report = agent.analyzeEnergyUsage({
     readings: [{ device_id: "plug.study", area: "study", recorded_at: "2026-10-16T10:00:00Z", interval_kwh: 1 }],
@@ -499,7 +499,7 @@ test("节能 Agent 可分析区间能耗并给建议，但不创建控制任务"
   assert.equal(report.side_effects.device_control_performed, false);
 });
 
-test("节能 Agent 可比较前后窗口，但不将差值解释为因果节能", () => {
+test("能源管家可比较前后窗口，但不将差值解释为因果节能", () => {
   const agent = new EnergySavingAgent();
   const baseline = {
     start_at: "2026-10-15T00:00:00.000Z",

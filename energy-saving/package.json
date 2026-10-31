@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "家庭微脑节能 Agent：根据家庭状态生成经过安全约束的设备节能任务",
+  "description": "家庭微脑能源管家：根据家庭状态生成经过安全约束的设备节能任务",
   "scripts": {
     "demo": "node src/demo.js",
     "demo:operations": "node src/operations-demo.js",
+    "demo:optimization": "node src/energy-optimization-demo.js",
     "test": "node --test"
   },
   "engines": {

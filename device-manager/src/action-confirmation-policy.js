@@ -9,8 +9,11 @@ export function getDeviceActionConfirmationPolicy(device, action) {
   if (action === "lock" || action === "unlock") {
     return {
       required: true,
+      ...(action === "unlock" ? { strong_auth_required: true } : {}),
       reason_code: action === "unlock" ? "HIGH_RISK_UNLOCK" : "HIGH_RISK_LOCK_ACTION",
-      message: "门锁操作属于高风险动作，必须取得用户明确确认。",
+      message: action === "unlock"
+        ? "开锁属于高风险动作，需先取得用户明确确认，再通过可信认证界面完成强认证；聊天确认本身不能授权开锁。"
+        : "上锁属于高风险动作，必须取得用户明确确认。",
     };
   }
 

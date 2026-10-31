@@ -68,7 +68,7 @@ try {
     privacy_level: "family",
     payload: { mode: "away" },
   });
-  show("4. 节能 Agent 只为已授权设备生成候选任务", {
+  show("4. 能源管家只为已授权设备生成候选任务", {
     status: energyResult.status,
     target_devices: energyResult.tasks.map((task) => task.target_ref.device_id),
     task_count: energyResult.tasks.length,

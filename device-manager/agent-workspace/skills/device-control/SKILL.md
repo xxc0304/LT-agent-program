@@ -12,7 +12,7 @@ user-invocable: true
 
 1. **确认目标与登记状态**：新家庭初始化或目标设备不在登记清单中时，先调用 `discover_household_devices` 和 `list_household_device_inventory`。用户用房间、俗称或用途描述设备时，再用 `list_devices` 从返回结果中逐字选取实际 `device_id`。自然语言别称不得自行拼成实体 ID（例如不能仅凭“书桌灯”构造 `light.desk`）。待核对设备不可控制；信息不足时询问用户，不得猜测设备或房间。目标已明确后，需要了解状态时才调用 `get_state`。
 2. **核对动作和参数**：仅使用工具支持的动作：`turn_on`、`turn_off`、`set_brightness`、`set_temperature`、`open`、`close`、`set_position`、`lock`、`unlock`。如果 canonical 设备视图明确列出能力证据并标记动作 `supported: false`，不得下发该动作，应向用户说明实体不支持；标记未知时不能宣称设备一定支持，按 HA 实际回执处理。亮度、温度、位置等数值必须来自用户明确要求或设备当前能力范围；缺少必要参数时先询问，不得擅自猜值。
-3. **处理风险**：对于“开门”“把门打开”“打开门”等歧义表达，先澄清用户是指物理开门、解锁门锁还是其他动作；澄清前不调用设备工具，也不得直接映射为 `unlock`。目标、动作和参数明确的单设备普通操作（灯、插座/开关、空调、窗帘）可直接走快捷路径；门锁和标记为 `requires_confirmation: true` 或 `risk_level: high/critical` 的设备必须先展示具体动作，再等待后续明确答复。场景、多设备请求、跨 Agent 候选计划和未授权自动化同样须确认。由 `resolve_agent_action_confirmation` 完成确认。不得自行传 `confirmed: true` 绕过策略；旧会话确认、含糊答复或对其他动作的确认均无效。
+3. **处理风险**：对于“开门”“把门打开”“打开门”等歧义表达，先澄清用户是指物理开门、解锁门锁还是其他动作；澄清前不调用设备工具，也不得直接映射为 `unlock`。目标、动作和参数明确的单设备普通操作（灯、插座/开关、空调、窗帘）可直接走快捷路径；门锁上锁和标记为 `requires_confirmation: true` 或 `risk_level: high/critical` 的设备必须先展示具体动作，再等待后续明确答复。解锁除聊天确认外，还必须通过独立可信认证界面；认证服务未配置、失败或校验不通过时不得执行。场景、多设备请求、跨 Agent 候选计划和未授权自动化同样须确认。由 `resolve_agent_action_confirmation` 完成聊天确认。不得自行传 `confirmed: true` 绕过策略；不得索取或传递 PIN、生物特征或签名凭据；旧会话确认、含糊答复或对其他动作的确认均无效。
 4. **执行一次**：明确单设备即时请求调用 `control_device`；复杂或多设备请求用 `submit_agent_plan` 让本地调度层校验。OpenClaw 可以理解罕见口语，但目标或动作存在多个合理解释时必须先追问。若返回 `WAITING_FOR_APPROVAL`，先用自然语言询问；若返回 `CLARIFICATION_REQUIRED`，先澄清冲突，不能批准当前计划。不要因等待或回执迟到而盲目重复动作。
 5. **验证结果**：工具返回成功后，再调用 `get_state` 读取实际状态。只有读回状态符合目标，才报告成功。若执行失败或状态不符，明确报告失败/未验证，不要说“已经完成”。
 

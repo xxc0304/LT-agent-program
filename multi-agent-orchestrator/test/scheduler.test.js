@@ -52,7 +52,7 @@ function setup() {
   return { homeAssistant, deviceRuntime, scheduler, energyAgent };
 }
 
-test("学习伴学事件可以经过节能 Agent 调度到设备管家", async () => {
+test("学习伴学事件可以经过能源管家调度到设备管家", async () => {
   const { deviceRuntime, scheduler } = setup();
   const learningAgent = new LearningCompanionAgent({
     analyzer: async () => ({
@@ -92,7 +92,7 @@ test("学习伴学事件可以经过节能 Agent 调度到设备管家", async (
   assert.equal(deviceRuntime.invoke("get_state", { device_id: "light.living_room" }).device.state, "off");
 });
 
-test("低置信度学习事件在节能 Agent 被拦截，不调用设备管家", async () => {
+test("低置信度学习事件在能源管家被拦截，不调用设备管家", async () => {
   const { scheduler } = setup();
   const event = {
     schema_version: "0.1",

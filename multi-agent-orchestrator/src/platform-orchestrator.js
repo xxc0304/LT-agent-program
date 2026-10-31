@@ -41,6 +41,9 @@ const ACTION_CONFLICT_GROUPS = Object.freeze({
   set_hvac_mode: "hvac_mode",
   set_fan_mode: "fan_mode",
 });
+const ENERGY_BUDGET_MINIMUM_COMPLETE_DAYS = 3;
+const ENERGY_BUDGET_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const UTC_DAY_MS = 86_400_000;
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -153,6 +156,100 @@ function noDispatchResult({ status, traceId, reasonCode, message, question, step
     results: [],
     remaining_step_ids: stepIds,
   };
+}
+
+function parseBudgetDate(value) {
+  if (typeof value !== "string" || !ENERGY_BUDGET_DATE_PATTERN.test(value)) return null;
+  const timestamp = Date.parse(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== value) return null;
+  return timestamp;
+}
+
+function budgetDailyEnergyKwh(item) {
+  if (!isRecord(item)) return null;
+  const canonicalValue = item.energy_kwh;
+  const commonAlias = item.kwh;
+  if (canonicalValue !== undefined && commonAlias !== undefined && canonicalValue !== commonAlias) return null;
+  const value = canonicalValue ?? commonAlias;
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function normalizeBudgetForecastInput(input) {
+  if (!Array.isArray(input.daily_totals)) return clone(input);
+  return {
+    ...clone(input),
+    daily_totals: input.daily_totals.map((item) => {
+      if (!isRecord(item) || item.energy_kwh !== undefined || item.kwh === undefined) return clone(item);
+      const { kwh, ...rest } = item;
+      return { ...rest, energy_kwh: kwh };
+    }),
+  };
+}
+
+function energyBudgetForecastQuestion(step) {
+  const input = isRecord(step.input) ? step.input : {};
+  const missing = [];
+  const budgetValid = Number.isFinite(input.budget_kwh) && input.budget_kwh > 0;
+  if (!budgetValid) missing.push("本期用电预算");
+
+  const startMs = parseBudgetDate(input.period_start);
+  const endMs = parseBudgetDate(input.period_end);
+  const throughMs = parseBudgetDate(input.through_date);
+  const dateRangeValid = startMs !== null && endMs !== null && throughMs !== null
+    && endMs >= startMs && throughMs >= startMs && throughMs <= endMs;
+  if (!dateRangeValid) missing.push("账期起止日期和统计截止日");
+
+  const dailyTotals = Array.isArray(input.daily_totals) ? input.daily_totals : null;
+  if (!dailyTotals) missing.push("从账期开始到统计截止日的逐日电量");
+
+  let coverageValid = false;
+  if (dateRangeValid && dailyTotals) {
+    const observedDays = Math.floor((throughMs - startMs) / UTC_DAY_MS) + 1;
+    if (observedDays < ENERGY_BUDGET_MINIMUM_COMPLETE_DAYS) {
+      missing.push(`至少 ${ENERGY_BUDGET_MINIMUM_COMPLETE_DAYS} 个完整日的数据`);
+    }
+    if (observedDays > 366) missing.push("不超过 366 天的统计范围");
+
+    const totalsByDate = new Map();
+    let entriesValid = dailyTotals.length <= 366;
+    if (entriesValid) {
+      for (const item of dailyTotals) {
+        const energyKwh = budgetDailyEnergyKwh(item);
+        if (!isRecord(item)
+          || parseBudgetDate(item.date) === null
+          || energyKwh === null
+          || totalsByDate.has(item.date)) {
+          entriesValid = false;
+          break;
+        }
+        totalsByDate.set(item.date, energyKwh);
+      }
+    }
+
+    const contiguous = entriesValid
+      && observedDays <= 366
+      && dailyTotals.length === observedDays
+      && Array.from({ length: observedDays }, (_, offset) =>
+        new Date(startMs + offset * UTC_DAY_MS).toISOString().slice(0, 10),
+      ).every((date) => totalsByDate.has(date));
+    if (!contiguous) missing.push("连续、无重复且没有漏天的逐日数据");
+    coverageValid = contiguous && observedDays >= ENERGY_BUDGET_MINIMUM_COMPLETE_DAYS;
+  }
+
+  if (input.coverage_attested_complete !== true) missing.push("确认这些数据覆盖完整且没有漏天");
+  if (missing.length === 0 && coverageValid) return null;
+
+  const uniqueMissing = [...new Set(missing)];
+  return `现在还不能估算本期预算。请补充${uniqueMissing.join("、")}；至少需要 ${ENERGY_BUDGET_MINIMUM_COMPLETE_DAYS} 个从账期开始连续统计的完整日，并确认数据没有漏天。`;
+}
+
+function findEnergyBudgetForecastClarification(plan) {
+  for (const step of plan.stepById.values()) {
+    if (step.agent_id !== "energy-saving" || step.capability !== "forecast_energy_budget") continue;
+    const question = energyBudgetForecastQuestion(step);
+    if (question) return { question, stepId: step.step_id };
+  }
+  return null;
 }
 
 function dependsTransitivelyOn(stepId, ancestorId, stepById, seen = new Set()) {
@@ -355,6 +452,17 @@ export function createPlatformOrchestrator({ registry, maxSteps = 12 } = {}) {
         }
       }
 
+      const budgetClarification = findEnergyBudgetForecastClarification(normalized);
+      if (budgetClarification) {
+        return noDispatchResult({
+          status: RUN_STATUSES.NEEDS_CLARIFICATION,
+          traceId: normalized.traceId,
+          reasonCode: "ENERGY_BUDGET_DATA_INCOMPLETE",
+          question: budgetClarification.question,
+          stepIds: [...normalized.stepById.keys()],
+        });
+      }
+
       const deviceActionStepIds = plan.steps
         .filter((step) => registry.getCapability(step.agent_id, step.capability)?.effect === "device_action")
         .map((step) => step.step_id);
@@ -448,7 +556,9 @@ export function createPlatformOrchestrator({ registry, maxSteps = 12 } = {}) {
               agentId: step.agent_id,
               capability: step.capability,
               task: step.task.trim(),
-              input: clone(step.input ?? {}),
+              input: step.agent_id === "energy-saving" && step.capability === "forecast_energy_budget"
+                ? normalizeBudgetForecastInput(step.input ?? {})
+                : clone(step.input ?? {}),
               action: step.action ? clone(step.action) : null,
               dependencyResults,
               originalRequest: normalized.request,

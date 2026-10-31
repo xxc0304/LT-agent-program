@@ -40,11 +40,12 @@ export class MockHomeAssistant {
   #stateChangeListeners = new Set();
   #mockBehaviorListeners = new Set();
 
-  constructor({ devices, eventRetentionLimit = 200 } = {}) {
+  constructor({ devices, eventRetentionLimit = 200, lockAuthorizationVerifier = null } = {}) {
     const initialDevices = devices ?? JSON.parse(readFileSync(DEFAULT_DEVICES_PATH, "utf8"));
     this.devices = new Map(initialDevices.map((device) => [device.device_id, clone(device)]));
     this.auditLog = [];
     this.eventLedger = new DeviceEventLedger({ retentionLimit: eventRetentionLimit });
+    this.lockAuthorizationVerifier = lockAuthorizationVerifier;
   }
 
   createStateMonitor({ onStateChange = () => {} } = {}) {
@@ -475,7 +476,7 @@ export class MockHomeAssistant {
     };
   }
 
-  controlDevice({ device_id, action, parameters = {}, confirmed = false, trace_id = null, task_id = null, idempotency_key = null } = {}) {
+  controlDevice({ device_id, action, parameters = {}, confirmed = false, lock_authorization_proof, lock_authorization_context, trace_id = null, task_id = null, idempotency_key = null } = {}) {
     if (!device_id || !action) {
       return failure("INVALID_ARGUMENT", "device_id 和 action 是必填参数");
     }
@@ -503,7 +504,7 @@ export class MockHomeAssistant {
     }
 
     const before = clone(device);
-    const actionResult = this.#applyAction(device, action, parameters, confirmed);
+    const actionResult = this.#applyAction(device, action, parameters, confirmed, lock_authorization_proof, lock_authorization_context);
     if (!actionResult.success) {
       this.eventLedger.append({
         event_type: "action_failed",
@@ -653,7 +654,7 @@ export class MockHomeAssistant {
     if (event) this.#emitStateChange(event);
   }
 
-  #applyAction(device, action, parameters, confirmed) {
+  #applyAction(device, action, parameters, confirmed, lockAuthorizationProof, lockAuthorizationContext) {
     const confirmationPolicy = getDeviceActionConfirmationPolicy(device, action);
     if (confirmationPolicy.required && confirmed !== true) {
       return failure("CONFIRMATION_REQUIRED", confirmationPolicy.message, {
@@ -661,6 +662,23 @@ export class MockHomeAssistant {
         action,
         reason_code: confirmationPolicy.reason_code,
       });
+    }
+    if (action === "unlock") {
+      const authorization = this.lockAuthorizationVerifier?.verifyLockAuthorization?.({
+        proof: lockAuthorizationProof,
+        expected: {
+          ...lockAuthorizationContext,
+          device_id: device.device_id,
+          action,
+        },
+      });
+      if (authorization?.success !== true) {
+        return failure(
+          authorization?.error?.code ?? "TRUSTED_AUTHENTICATION_REQUIRED",
+          authorization?.error?.message ?? "开锁需要可信认证界面的短时授权；普通聊天确认不能代替认证。",
+          { device_id: device.device_id, action, reason_code: "TRUSTED_AUTHENTICATION_REQUIRED" },
+        );
+      }
     }
 
     switch (device.domain) {

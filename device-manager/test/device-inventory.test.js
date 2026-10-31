@@ -200,7 +200,7 @@ test("清单持久化；HA 后续扫描不到实体时撤销旧授权并要求�
   assert.equal((await restarted.listEnergyEligibleDevices()).devices.length, 0);
 });
 
-test("节能 Agent 通过家庭清单读取已授权设备，而非全量 HA 实体", async (t) => {
+test("能源管家通过家庭清单读取已授权设备，而非全量 HA 实体", async (t) => {
   const fixture = testInventory(t, [
     { device_id: "light.study", name: "台灯", domain: "light", state: "on", available: true, attributes: {} },
     { device_id: "switch.study_plug", name: "书桌插座", domain: "switch", state: "on", available: true, attributes: {} },

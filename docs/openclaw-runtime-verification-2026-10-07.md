@@ -31,12 +31,12 @@
 
 ## 2026-10-11 自然语言 Mock 多 Agent 验证
 
-用户明确同意将本次 Agent 工作区说明发送给 DeepSeek 后，使用独立会话执行了一次不投递外部渠道的 Gateway 对话：自然语言请求为“演示一下多 Agent 协作：模拟孩子离开书桌十分钟且房间无人时，节能 Agent 和设备管家如何协作。仅运行项目自带的 Mock 演示，不要控制真实设备或调用其他设备工具。”
+用户明确同意将本次 Agent 工作区说明发送给 DeepSeek 后，使用独立会话执行了一次不投递外部渠道的 Gateway 对话：自然语言请求为“演示一下多 Agent 协作：模拟孩子离开书桌十分钟且房间无人时，能源管家和设备管家如何协作。仅运行项目自带的 Mock 演示，不要控制真实设备或调用其他设备工具。”
 
 - 运行环境：OpenClaw CLI/Gateway `2026.7.1-2`；provider `deepseek`、模型 `deepseek-v4-flash`；`thinking=off`；单次请求耗时约 4.8 秒。
 - 使用量回执：总计 `19,964` tokens，其中缓存读取 `18,176`；该数字是 API 使用量回执，不代表费用，实际费用未查询。
 - 运行回执：`status=ok`，`toolSummary.calls=1`、`failures=0`，唯一工具为 `run_mock_agent_chain_demo`。
-- 演示结果：学习伴学事件 → 节能 Agent 生成 1 条 P3 关灯任务 → 设备管家执行并回读；Mock 客厅灯 `on → off`，回读验证通过。占用与学习事件是工具内生成的合成样例，不是实时视觉或传感器证据。
+- 演示结果：学习伴学事件 → 能源管家生成 1 条 P3 关灯任务 → 设备管家执行并回读；Mock 客厅灯 `on → off`，回读验证通过。占用与学习事件是工具内生成的合成样例，不是实时视觉或传感器证据。
 - 边界：该工具每次都会新建独立 `MockHomeAssistant`，不读取运行时所配置的 HA，也不控制真实家电。此次验证证明“OpenClaw 自然语言 → 模型选工具 → 插件 → 多 Agent Mock 链路”可运行，不证明三个业务 Agent 作为独立 OpenClaw 进程相互远程调用。
 - 上下文范围：运行回执显示除了项目 Agent workspace 文件与 Skill 描述外，OpenClaw 还注入了通用系统/工具上下文及 20 个 Skill 的概要（含非本项目通用 Skill）；没有调用这些 Skill 或工具。后续若继续向模型发送请求，应先评估并缩小不必要的工具/Skill 上下文。本次未读取家庭记忆或发送真实家庭事件/图像。
 - CLI 启动仍报告 iMessage/Telegram 内置渠道路径警告及插件索引 stale-policy 提醒；设备管家插件仍为 `loaded`。Gateway loopback 探测成功，但状态为 `connected-no-operator-scope`；这些问题尚未修复，也未影响本次 Agent 调用。

@@ -275,10 +275,12 @@ try {
 
     $configFileLines = Invoke-NativeCommand -Executable $script:openclawPath -Arguments @('config', 'file') -Label 'Checking active OpenClaw profile'
     $configFileOutput = $configFileLines -join "`n"
-    if ($configFileOutput -notmatch '(?i)(?<path>(?:[A-Z]:\\|\\\\)[^\r\n"]*openclaw\.json)') {
+    if ($configFileOutput -notmatch '(?i)(?<path>(?:(?:[A-Z]:\\|\\\\)|~[\\/])[^\r\n"]*openclaw\.json)') {
         throw 'Could not identify the active OpenClaw config file. No profile changes were made.'
     }
     $configPath = $Matches.path.Trim()
+    if ($configPath -match '^~[\\/]') { $configPath = Join-Path -Path $HOME -ChildPath $configPath.Substring(2) }
+    $configPath = [System.IO.Path]::GetFullPath($configPath)
     if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
         throw "The active OpenClaw config does not exist at the reported path. Complete OpenClaw setup first; no profile was initialized."
     }
@@ -341,6 +343,8 @@ try {
 
     $pluginDocument = Get-Content -LiteralPath (Join-Path $repoRoot 'device-manager\openclaw.plugin.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $pluginTools = @($pluginDocument.contracts.tools | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $energyAgentOnlyTools = @('analyze_energy_usage', 'forecast_energy_budget', 'evaluate_energy_effect', 'calculate_energy_optimization')
+    $deviceManagerTools = @($pluginTools | Where-Object { $_ -notin $energyAgentOnlyTools })
     if ($pluginTools -notcontains 'talk_to_device_manager') { throw 'The package plugin is missing talk_to_device_manager.' }
     $platformPluginDocument = Get-Content -LiteralPath (Join-Path $repoRoot 'multi-agent-orchestrator\openclaw.plugin.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $platformTool = [string]($platformPluginDocument.contracts.tools | Where-Object { [string]$_ -eq 'orchestrate_household_agents' } | Select-Object -First 1)
@@ -463,7 +467,8 @@ try {
     Write-Host "  Device-manager plugin source: $(Join-Path $repoRoot 'device-manager')"
     Write-Host "  Platform-orchestrator plugin source: $(Join-Path $repoRoot 'multi-agent-orchestrator')"
     Write-Host "  New Agent workspaces: $(if ($createAgents.Count) { $createAgents -join ', ' } else { 'none; existing matching workspaces will be reused' })"
-    Write-Host "  Plugin tools made available to device-manager: $($pluginTools.Count)"
+    Write-Host "  Plugin tools made available to device-manager: $($deviceManagerTools.Count)"
+    Write-Host "  Energy analysis and forecast tools are scoped to energy-saving"
     Write-Host "  Main chat orchestration tool: $platformTool"
     Write-Host '  Legacy fixed frontdoor relay: explicitly denied for the main Agent'
     Write-Host "  Direct device-manager tools: all $($pluginTools.Count) explicitly denied for the frontdoor; household requests must use the platform orchestrator"
@@ -578,8 +583,8 @@ try {
     $agentToolPolicy = @(
         # The main Agent must not bypass orchestration by calling device-manager tools directly.
         @{ Id = $frontdoorId; Allow = @($platformTool); Deny = @('talk_to_device_manager') + $pluginTools + $restrictedSessionTools },
-        @{ Id = 'device-manager'; Allow = $pluginTools; Deny = @('sessions_list', 'sessions_history', 'sessions_spawn') },
-        @{ Id = 'energy-saving'; Allow = @(); Deny = $restrictedSessionTools },
+        @{ Id = 'device-manager'; Allow = $deviceManagerTools; Deny = @('sessions_list', 'sessions_history', 'sessions_spawn') + $energyAgentOnlyTools },
+        @{ Id = 'energy-saving'; Allow = @('plan_energy_optimization', 'calculate_energy_optimization', 'forecast_energy_budget', 'analyze_energy_usage', 'evaluate_energy_effect'); Deny = $restrictedSessionTools },
         @{ Id = 'learning-companion'; Allow = @(); Deny = $restrictedSessionTools }
     )
     foreach ($policy in $agentToolPolicy) {
@@ -634,14 +639,33 @@ try {
 
     if (-not $SkipMockVerification) {
         Write-Host 'Running the project local/Mock verification with the Mock backend forced for this process...' -ForegroundColor Cyan
-        $environmentNames = @('DEVICE_MANAGER_BACKEND', 'HA_URL', 'HA_TOKEN', 'HA_ENTITY_ALLOWLIST', 'HA_CONFIRMATION_REQUIRED_ENTITIES')
+        $environmentNames = @(
+            'DEVICE_MANAGER_BACKEND',
+            'HA_URL',
+            'HA_TOKEN',
+            'HA_ENTITY_ALLOWLIST',
+            'HA_CONFIRMATION_REQUIRED_ENTITIES',
+            'DEVICE_MANAGER_LOCK_AUTH_URL',
+            'DEVICE_MANAGER_LOCK_AUTH_PUBLIC_KEY',
+            'DEVICE_MANAGER_LOCK_AUTH_ISSUER',
+            'DEVICE_MANAGER_LOCK_AUTH_AUDIENCE'
+        )
         $oldEnvironment = @{}
         foreach ($name in $environmentNames) {
             $oldEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
         }
         try {
             [Environment]::SetEnvironmentVariable('DEVICE_MANAGER_BACKEND', 'mock', 'Process')
-            foreach ($name in @('HA_URL', 'HA_TOKEN', 'HA_ENTITY_ALLOWLIST', 'HA_CONFIRMATION_REQUIRED_ENTITIES')) {
+            foreach ($name in @(
+                'HA_URL',
+                'HA_TOKEN',
+                'HA_ENTITY_ALLOWLIST',
+                'HA_CONFIRMATION_REQUIRED_ENTITIES',
+                'DEVICE_MANAGER_LOCK_AUTH_URL',
+                'DEVICE_MANAGER_LOCK_AUTH_PUBLIC_KEY',
+                'DEVICE_MANAGER_LOCK_AUTH_ISSUER',
+                'DEVICE_MANAGER_LOCK_AUTH_AUDIENCE'
+            )) {
                 [Environment]::SetEnvironmentVariable($name, $null, 'Process')
             }
             $powershellPath = Get-ExecutablePath -Name 'powershell'

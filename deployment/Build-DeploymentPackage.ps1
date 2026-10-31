@@ -1,5 +1,5 @@
 param(
-    [string]$PackageVersion = "0.1.25"
+    [string]$PackageVersion = "0.1.34"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +11,7 @@ $archivePath = Join-Path $artifactRoot "$packageName.zip"
 $buildDirectory = Join-Path $artifactRoot "$packageName.building"
 $buildingArchive = Join-Path $artifactRoot "$packageName.building.zip"
 . (Join-Path $PSScriptRoot 'Package-Exclusions.ps1')
+. (Join-Path $PSScriptRoot 'Package-Archive.ps1')
 
 foreach ($path in @($finalDirectory, $archivePath, $buildDirectory, $buildingArchive)) {
     if (Test-Path -LiteralPath $path) {
@@ -124,6 +125,7 @@ try {
         "deployment/install-agent-stack.test.mjs",
         "deployment/verify-agent-stack.mjs",
         "deployment/Package-Exclusions.ps1",
+        "deployment/Package-Archive.ps1",
         "deployment/Run-Agent-Integration-Demo.ps1",
         "deployment/Verify-Agent-Integration.ps1",
         "deployment/Test-DeploymentPackage.ps1"
@@ -185,7 +187,7 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
 
-    Compress-Archive -Path (Join-Path $buildDirectory "*") -DestinationPath $buildingArchive -CompressionLevel Optimal
+    New-PortableZipArchive -SourceDirectory $buildDirectory -ArchivePath $buildingArchive
     Move-Item -LiteralPath $buildDirectory -Destination $finalDirectory
     Move-Item -LiteralPath $buildingArchive -Destination $archivePath
 

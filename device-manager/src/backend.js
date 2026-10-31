@@ -2,6 +2,7 @@ import { MockHomeAssistant } from "./mock-ha.js";
 import { RealHomeAssistant } from "./real-ha.js";
 import { HomeAssistantRegistryClient } from "./home-assistant-registry.js";
 import { PersistentDeviceEventLedger } from "./events.js";
+import { createLockAuthorizationVerifierFromEnv } from "./lock-authorization.js";
 
 function parseEntityAllowlist(value) {
   if (!value?.trim()) return undefined;
@@ -19,10 +20,11 @@ function parseConfirmationRequiredEntityIds(value) {
     .filter(Boolean);
 }
 
-export function createHomeAssistantBackend({ env = process.env, fetchImpl } = {}) {
+export function createHomeAssistantBackend({ env = process.env, fetchImpl, lockAuthorizationVerifier } = {}) {
   const backend = (env.DEVICE_MANAGER_BACKEND ?? "mock").trim().toLowerCase();
+  const verifier = lockAuthorizationVerifier ?? createLockAuthorizationVerifierFromEnv(env);
 
-  if (backend === "mock") return new MockHomeAssistant();
+  if (backend === "mock") return new MockHomeAssistant({ lockAuthorizationVerifier: verifier });
   if (["home-assistant", "home_assistant", "ha", "real"].includes(backend)) {
     const registryClient = ["false", "0", "off"].includes((env.HA_REGISTRY_ENRICHMENT ?? "true").trim().toLowerCase())
       ? null
@@ -33,6 +35,7 @@ export function createHomeAssistantBackend({ env = process.env, fetchImpl } = {}
       token: env.HA_TOKEN,
       entityAllowlist: parseEntityAllowlist(env.HA_ENTITY_ALLOWLIST),
       confirmationRequiredEntityIds: parseConfirmationRequiredEntityIds(env.HA_CONFIRMATION_REQUIRED_ENTITIES),
+      lockAuthorizationVerifier: verifier,
       fetchImpl,
       registryClient,
       ...(eventLedgerPath ? { eventLedger: new PersistentDeviceEventLedger({ filePath: eventLedgerPath }) } : {}),

@@ -38,7 +38,7 @@ test("Mock OpenClaw frontdoor routes an analysis then asks before the device-man
   const registry = new PlatformAgentRegistry();
   registry.registerAgent({
     agent_id: "energy-saving",
-    name: "节能 Agent",
+    name: "能源管家",
     capabilities: [{ name: "evaluate_energy_opportunity", effect: "planning" }],
     invoke,
   });
@@ -102,7 +102,7 @@ test("unmatched plans and explicit clarify/unsupported decisions never reach Ope
   const registry = new PlatformAgentRegistry();
   registry.registerAgent({
     agent_id: "energy-saving",
-    name: "节能 Agent",
+    name: "能源管家",
     capabilities: [{ name: "evaluate_energy_opportunity", effect: "planning" }],
     invoke,
   });

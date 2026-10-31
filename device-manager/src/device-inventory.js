@@ -460,10 +460,10 @@ export class DeviceInventory {
         && existing.energy_opt_in
       : energy_opt_in === true;
     if (energyOptIn && approval_status !== "approved") {
-      return failure("ENERGY_REQUIRES_APPROVAL", "只有已确认设备才能纳入节能 Agent");
+      return failure("ENERGY_REQUIRES_APPROVAL", "只有已确认设备才能纳入能源管家");
     }
     if (energyOptIn && !ENERGY_DOMAINS.has(existing.domain)) {
-      return failure("ENERGY_DOMAIN_NOT_SUPPORTED", "节能 Agent 当前只接受灯、开关/插座和空调实体");
+      return failure("ENERGY_DOMAIN_NOT_SUPPORTED", "能源管家当前只接受灯、开关/插座和空调实体");
     }
     if (energyOptIn && !normalizeArea(area_id ?? existing.area_id)) {
       return failure("ENERGY_AREA_REQUIRED", "纳入节能前必须确认设备所属房间");
@@ -506,12 +506,12 @@ export class DeviceInventory {
     try {
       result = await this.deviceClient.listDevices();
     } catch {
-      return failure("DEVICE_STATE_UNAVAILABLE", "无法读取当前设备状态；节能 Agent 不会生成任务");
+      return failure("DEVICE_STATE_UNAVAILABLE", "无法读取当前设备状态；能源管家不会生成任务");
     }
     if (!result?.success || !Array.isArray(result.devices)) {
       return failure(
         result?.error?.code ?? "DEVICE_STATE_UNAVAILABLE",
-        result?.error?.message ?? "无法读取当前设备状态；节能 Agent 不会生成任务",
+        result?.error?.message ?? "无法读取当前设备状态；能源管家不会生成任务",
       );
     }
 

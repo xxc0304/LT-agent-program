@@ -71,7 +71,7 @@ export function createIndependentEnergyWorkflow({ agentClient, executeEnergyTask
     const previous = requests.get(normalizedIdempotencyKey);
     if (previous) {
       if (previous.fingerprint !== requestFingerprint) {
-        const error = new Error("同一 idempotency_key 不可用于不同的节能 Agent 事件");
+        const error = new Error("同一 idempotency_key 不可用于不同的能源管家事件");
         error.code = "IDEMPOTENCY_KEY_CONFLICT";
         throw error;
       }
@@ -108,7 +108,7 @@ export function createIndependentEnergyWorkflow({ agentClient, executeEnergyTask
     });
     const output = agentResult?.output;
     if (agentResult?.status !== "ok" || !isRecord(output)) {
-      const error = new Error("独立节能 Agent 未返回已校验的候选结果");
+      const error = new Error("独立能源管家未返回已校验的候选结果");
       error.code = "INVALID_AGENT_RESULT";
       throw error;
     }
@@ -122,7 +122,7 @@ export function createIndependentEnergyWorkflow({ agentClient, executeEnergyTask
         event_id: event.event_id,
         source_agent: "energy-saving",
         reason_code: output.reason_code,
-        message: "节能 Agent 判断当前无需设备动作。",
+        message: "能源管家判断当前无需设备动作。",
       };
     }
 
@@ -140,7 +140,7 @@ export function createIndependentEnergyWorkflow({ agentClient, executeEnergyTask
       task: clone(output),
       receipt: clone(receipt),
       message: receiptStatus === "CHALLENGE"
-        ? "节能 Agent 提交了候选动作，设备管家已暂停执行并等待用户确认。"
+        ? "能源管家提交了候选动作，设备管家已暂停执行并等待用户确认。"
         : receiptStatus === "SUCCEEDED"
           ? "设备管家完成了候选动作并返回执行结果。"
           : "候选任务已进入设备管家校验流程。",

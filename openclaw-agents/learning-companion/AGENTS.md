@@ -57,5 +57,5 @@ Event 顶层保留 `confidence`（0 到 1）和布尔值 `needs_review`；`paylo
 - `standing` 不等于离开书桌；只有明确的 `away_from_desk`、`leaving_desk` 或 `no_occupancy` 才能交给节能规则；
 - 图片、视频和 API Key 只留在视觉识别边界，不放进跨 Agent Event；
 - 低置信度结果只供人工复核，不触发自动设备控制；
-- `annotation_scope: "classroom_scene"` 的结果永远不能作为节能 Agent 的离位信号，即使事件中其他字段意外出现离位值或长持续时间；
+- `annotation_scope: "classroom_scene"` 的结果永远不能作为能源管家的离位信号，即使事件中其他字段意外出现离位值或长持续时间；
 - 不要声称当前模型已经达到生产级准确率。SCB 小样本结果只能说明链路可运行。

@@ -27,7 +27,11 @@ import { OpenClawAgentClient, OPENCLAW_AGENT_TARGETS } from "../../multi-agent-o
 import { createOpenClawGatewaySendMessage } from "../../multi-agent-orchestrator/src/openclaw-gateway-transport.js";
 import { createOpenClawFrontdoorTransport } from "../../multi-agent-orchestrator/src/openclaw-frontdoor-transport.js";
 import { createIndependentEnergyWorkflow } from "./independent-energy-workflow.js";
-import { createEnergyOperationsTools, ENERGY_OPERATIONS_TOOL_DEFINITIONS } from "./energy-operations-tools.js";
+import {
+  createEnergyOperationsTools,
+  ENERGY_OPERATIONS_TOOL_DEFINITIONS,
+  ENERGY_OPTIMIZATION_CALCULATOR_TOOL_DEFINITION,
+} from "./energy-operations-tools.js";
 import { MaintenanceScheduleStore } from "./maintenance-store.js";
 import { createMaintenanceReminderTools, MAINTENANCE_REMINDER_TOOL_DEFINITIONS } from "./maintenance-reminder-tools.js";
 import { MaintenanceReminderInbox } from "./maintenance-reminder-inbox.js";
@@ -64,6 +68,12 @@ function configureMemoryStoreFromPluginConfig(store, pluginConfig = {}) {
       throw new TypeError("device-manager memoryDatabasePath must be an absolute SQLite file path");
     }
   }
+  const resolvedDatabasePath = backend === "sqlite" ? path.resolve(databasePath) : null;
+  if (store.opened || store.sqliteRepository) {
+    const alreadyConfigured = store.backend === backend
+      && (backend !== "sqlite" || store.databasePath === resolvedDatabasePath);
+    if (alreadyConfigured) return;
+  }
   store.configurePersistence({ backend, ...(databasePath ? { databasePath } : {}) });
 }
 
@@ -92,7 +102,13 @@ const memoryStore = new PreferenceMemoryStore({
 });
 const maintenanceStore = new MaintenanceScheduleStore();
 const maintenanceReminderInbox = new MaintenanceReminderInbox();
-const energyOperations = createEnergyOperationsTools({ maintenanceStore, reminderInbox: maintenanceReminderInbox });
+const energyOperations = createEnergyOperationsTools({
+  energyAgent: orchestrator.energyAgent,
+  maintenanceStore,
+  reminderInbox: maintenanceReminderInbox,
+  deviceInventory,
+  agentPlanTools: agentPlans,
+});
 const maintenanceReminders = createMaintenanceReminderTools({
   scheduleStore: maintenanceStore,
   inbox: maintenanceReminderInbox,
@@ -163,6 +179,7 @@ const TOOL_DEFINITIONS = [
   ...DEVICE_MONITOR_TOOL_DEFINITIONS,
   ...DEVICE_INVENTORY_TOOL_DEFINITIONS,
   ...ENERGY_OPERATIONS_TOOL_DEFINITIONS,
+  ENERGY_OPTIMIZATION_CALCULATOR_TOOL_DEFINITION,
   ...MAINTENANCE_REMINDER_TOOL_DEFINITIONS,
   {
     name: "talk_to_device_manager",
@@ -181,7 +198,7 @@ const TOOL_DEFINITIONS = [
     name: "call_independent_agent",
     label: "call_independent_agent",
     description:
-      "通过 OpenClaw Gateway 同步调用一个已注册的独立业务 Agent，并严格校验其 Event/Task JSON 输出。仅设备管家 Agent 会话中可用，目标限学习伴学或节能 Agent；此工具只生成/返回候选结果，不执行设备动作、不授予策略批准，也不替代后续调度器校验。输入只放完成该任务所需的最少 JSON 数据，不要传 API Key、认证信息、原始图片/视频或无关日常对话。",
+      "通过 OpenClaw Gateway 同步调用一个已注册的独立业务 Agent，并严格校验其 Event/Task JSON 输出。仅设备管家 Agent 会话中可用，目标限学习伴学或能源管家；此工具只生成/返回候选结果，不执行设备动作、不授予策略批准，也不替代后续调度器校验。输入只放完成该任务所需的最少 JSON 数据，不要传 API Key、认证信息、原始图片/视频或无关日常对话。",
     inputSchema: Type.Object({
       agent_id: Type.Union(OPENCLAW_AGENT_TARGETS.map((agentId) => Type.Literal(agentId))),
       input: Type.Record(Type.String(), Type.Any(), { description: "发送给指定 Agent 的最小 JSON 输入。" }),
@@ -193,7 +210,7 @@ const TOOL_DEFINITIONS = [
     name: "evaluate_energy_event_with_independent_agent",
     label: "evaluate_energy_event_with_independent_agent",
     description:
-      "把一个标准 Event 交给独立 energy-saving Agent 评估。若返回严格校验的 NO_ACTION，则正常结束且不操作设备；若返回 Task，则由设备管家送入现有计划校验/确认/执行/回读流程。对话输入不是已认证传感器来源，因此候选设备动作必须经用户确认；本工具不允许独立节能 Agent 直接控制 HA。",
+      "把一个标准 Event 交给独立 energy-saving Agent 评估。若返回严格校验的 NO_ACTION，则正常结束且不操作设备；若返回 Task，则由设备管家送入现有计划校验/确认/执行/回读流程。对话输入不是已认证传感器来源，因此候选设备动作必须经用户确认；本工具不允许独立能源管家直接控制 HA。",
     inputSchema: Type.Object({
       event: Type.Record(Type.String(), Type.Any(), { description: "符合公共 event.schema.json 的事件对象；不要伪造传感器认证，也不要包含图片、视频或认证数据。" }),
       trace_id: Type.Optional(Type.String({ minLength: 1 })),
@@ -366,12 +383,137 @@ function createIndependentEnergyWorkflowTool(definition, context) {
           status: "ERROR",
           error: {
             code: error?.code ?? "INDEPENDENT_ENERGY_WORKFLOW_FAILED",
-            message: error instanceof Error ? error.message : "独立节能 Agent 编排失败",
+            message: error instanceof Error ? error.message : "独立能源管家编排失败",
             ...(error?.details ? { details: error.details } : {}),
           },
           tool_call_id: toolCallId,
         });
       }
+    },
+  };
+}
+
+function createIndependentEnergyOptimizationTool(definition, context) {
+  const client = createAuthorizedIndependentAgentClient(context);
+  if (!client) return null;
+
+  return {
+    name: definition.name,
+    label: definition.label,
+    description: definition.description,
+    parameters: definition.inputSchema,
+    async execute(toolCallId, params, signal) {
+      signal?.throwIfAborted();
+      const callId = toolCallId || randomUUID();
+      const traceId = `trace-energy-optimization-${callId}`;
+      const idempotencyKey = `openclaw:energy-saving:optimization:${callId}`;
+      const evaluationTime = Date.now();
+      try {
+        const agentResult = await client.invoke({
+          agentId: "energy-saving",
+          operation: "plan_energy_optimization",
+          contract: "energy_optimization",
+          traceId,
+          idempotencyKey,
+          input: { ...params, evaluation_time_ms: evaluationTime },
+        });
+        const optimization = agentResult.output;
+        const result = await energyOperations.complete_energy_optimization(params, optimization);
+        return jsonResult({
+          ...result,
+          delegated_to: "energy-saving",
+          trace_id: traceId,
+          tool_call_id: toolCallId,
+        });
+      } catch (error) {
+        return jsonResult({
+          success: false,
+          execution_performed: false,
+          status: "ERROR",
+          delegated_to: "energy-saving",
+          trace_id: traceId,
+          error: {
+            code: error?.code ?? "ENERGY_OPTIMIZATION_DELEGATION_FAILED",
+            message: error instanceof Error ? error.message : "能源管家委派失败",
+            ...(error?.details ? { details: error.details } : {}),
+          },
+          tool_call_id: toolCallId,
+        });
+      }
+    },
+  };
+}
+
+function createEnergyOptimizationTool(definition, context) {
+  const toolContext = context?.toolContext;
+  if (toolContext?.agentId === "energy-saving"
+    && typeof toolContext.sessionKey === "string"
+    && toolContext.sessionKey.startsWith("agent:energy-saving:")) {
+    return {
+      name: definition.name,
+      label: definition.label,
+      description: "能源管家直接会话的只读优化计算入口。只生成建议报告，不创建设备计划、不执行控制或安装排程。",
+      parameters: definition.inputSchema,
+      async execute(toolCallId, params, signal) {
+        signal?.throwIfAborted();
+        return jsonResult(energyOperations.calculate_energy_optimization(params));
+      },
+    };
+  }
+  return createIndependentEnergyOptimizationTool(definition, context);
+}
+
+function createEnergyOptimizationCalculatorTool(definition, context) {
+  const toolContext = context?.toolContext;
+  if (toolContext?.agentId !== "energy-saving"
+    || typeof toolContext.sessionKey !== "string"
+    || !toolContext.sessionKey.startsWith("agent:energy-saving:")) return null;
+
+  return {
+    name: definition.name,
+    label: definition.label,
+    description: definition.description,
+    parameters: definition.inputSchema,
+    async execute(toolCallId, params, signal) {
+      signal?.throwIfAborted();
+      const report = energyOperations.calculate_energy_optimization(params);
+      return jsonResult(report);
+    },
+  };
+}
+
+function createEnergyBudgetForecastTool(definition, context) {
+  const toolContext = context?.toolContext;
+  if (toolContext?.agentId !== "energy-saving"
+    || typeof toolContext.sessionKey !== "string"
+    || !toolContext.sessionKey.startsWith("agent:energy-saving:")) return null;
+
+  return {
+    name: definition.name,
+    label: definition.label,
+    description: definition.description,
+    parameters: definition.inputSchema,
+    async execute(toolCallId, params, signal) {
+      signal?.throwIfAborted();
+      return jsonResult(await energyOperations.forecast_energy_budget(params));
+    },
+  };
+}
+
+function createEnergyAnalysisTool(definition, context) {
+  const toolContext = context?.toolContext;
+  if (toolContext?.agentId !== "energy-saving"
+    || typeof toolContext.sessionKey !== "string"
+    || !toolContext.sessionKey.startsWith("agent:energy-saving:")) return null;
+
+  return {
+    name: definition.name,
+    label: definition.label,
+    description: definition.description,
+    parameters: definition.inputSchema,
+    async execute(toolCallId, params, signal) {
+      signal?.throwIfAborted();
+      return jsonResult(await energyOperations[definition.name](params));
     },
   };
 }
@@ -398,6 +540,38 @@ const toolPlugin = defineToolPlugin({
             parameters: definition.inputSchema,
             factory: (context) => createHouseholdFrontdoorTool(definition, context),
           })
+        : definition.name === "plan_energy_optimization"
+          ? tool({
+              name: definition.name,
+              label: definition.label,
+              description: definition.description,
+              parameters: definition.inputSchema,
+              factory: (context) => createEnergyOptimizationTool(definition, context),
+            })
+          : definition.name === "calculate_energy_optimization"
+            ? tool({
+                name: definition.name,
+                label: definition.label,
+                description: definition.description,
+                parameters: definition.inputSchema,
+                factory: (context) => createEnergyOptimizationCalculatorTool(definition, context),
+              })
+        : definition.name === "forecast_energy_budget"
+          ? tool({
+              name: definition.name,
+              label: definition.label,
+              description: definition.description,
+              parameters: definition.inputSchema,
+              factory: (context) => createEnergyBudgetForecastTool(definition, context),
+            })
+        : ["analyze_energy_usage", "evaluate_energy_effect"].includes(definition.name)
+          ? tool({
+              name: definition.name,
+              label: definition.label,
+              description: definition.description,
+              parameters: definition.inputSchema,
+              factory: (context) => createEnergyAnalysisTool(definition, context),
+            })
         : definition.name === "call_independent_agent"
         ? tool({
             name: definition.name,

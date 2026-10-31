@@ -2,19 +2,27 @@
 
 ## 目标
 
-将节能 Agent 已有的本地分析能力和设备管家已有的维护计划逻辑注册为 OpenClaw 可调用工具，并使维护周期在 Gateway 重启后保留。本阶段仍是本地/Mock 工具链，不连接真实 HA、电表或家电。
+将能源管家已有的本地分析能力和设备管家已有的维护计划逻辑注册为 OpenClaw 可调用工具，并使维护周期在 Gateway 重启后保留。本阶段仍是本地/Mock 工具链，不连接真实 HA、电表或家电。
 
 ## 新增 OpenClaw 工具
 
 | 工具 | 输入 | 结果与边界 |
 | --- | --- | --- |
-| `analyze_energy_usage` | 调用方提供的区间电量读数，可选电价、预算、时区 | 返回总量、设备/区域/时段画像、显式证据异常候选、成本预算与人工建议；不查电表、不创建设备任务 |
-| `evaluate_energy_effect` | 指定设备集合、采样间隔及前后两个窗口 | 窗口等长、读数完整且对齐时报告观察差值；不证明因果节能 |
+| `plan_energy_optimization` | 调用方提供的分时电量和电价；可选的用户明确可延后负载；可选待机读数和对应控制插座 ID | 设备管家经 OpenClaw 适配器委派独立 `energy-saving` Agent；能源管家使用受限的 `calculate_energy_optimization` 确定性工具，适配器逐字段核对报告后交给设备管家。待机候选还要重新核对登记/授权/状态/能力，再交给标准计划工作流待用户确认；不会自动安装排程或控制设备 |
+| `analyze_energy_usage` | 调用方提供的区间电量读数，可选电价、预算、时区 | 仅能源管家会话可调用；返回总量、设备/区域/时段画像、显式证据异常候选、成本预算与人工建议；不查电表、不创建设备任务 |
+| `forecast_energy_budget` | 账期预算和日期，以及从账期开始到最近完整日连续无缺漏的逐日 kWh；至少 3 个完整日，调用方必须明确声明覆盖完整。每日项使用 `date` 和 `energy_kwh` | 仅能源管家会话可调用；主对话编排器先校验结构化数据和完整性声明，条件不足时澄清且零 Agent 派发；会把常见的 `kwh` 字段归一为工具需要的 `energy_kwh`；工具自身仍会对缺天或未确认完整的数据返回 `NOT_FORECASTED`；不查电表、不创建任务、不控制设备 |
+| `evaluate_energy_effect` | 指定设备集合、采样间隔及前后两个窗口 | 仅能源管家会话可调用；窗口等长、读数完整且对齐时报告观察差值；不证明因果节能 |
 | `save_maintenance_schedule` | 设备 ID、维护类型、下次日期或周期，可选使用量阈值 | 新建或更新本地维护日程；不读取设备、不执行维修 |
 | `get_device_maintenance_plan` | 可选诊断快照、评估时刻和完成历史分页参数 | 返回逾期/到期/近期/资料缺失计划及只读排查建议，并按页返回本地完成历史；没有调用真实 HA |
 | `record_device_maintenance_completed` | `schedule_id`、可选完成时间、`user_confirmed: true` | 仅记录用户明确报告已完成的实体维护；更新周期并清零已存在的使用计数；不执行维护或设备复位 |
 
-工具实现位于 `device-manager/src/energy-operations-tools.js`，由 `device-manager/src/openclaw-plugin.js` 注册。节能业务逻辑复用 `energy-saving/src/energy-agent.js`，维护计划复用 `device-manager/src/maintenance-planner.js`，没有再引入新的调度框架。
+工具实现位于 `device-manager/src/energy-operations-tools.js`，由 `device-manager/src/openclaw-plugin.js` 注册，并在运行时将只读能耗分析、前后用量比较、预算进度估算与内部优化计算限定给 `energy-saving` 会话。Windows 与 Linux 安装器只向能源管家授予这些工具；设备管家保留 `plan_energy_optimization` 委派入口，并继续负责任何设备计划的校验、用户确认、设备控制和状态回读。节能业务逻辑复用 `energy-saving/src/energy-agent.js`、`energy-saving/src/energy-budget-forecast.js` 与 `energy-saving/src/energy-optimization.js`；维护计划复用 `device-manager/src/maintenance-planner.js`，没有再引入新的调度框架。
+
+预算估算使用线性日均速度，不构成统计预测或节能效果证明。其完整数据声明由调用方提供，能源管家只能验证日期连续和样本数，无法独立核验计量来源是否漏报。本功能已通过本地回归（能源管家 52/52、OpenClaw 能耗工具 7/7、部署安装器 13/13）和隔离 OpenClaw Gateway 主对话运行验收：`dev` 会话调用 `orchestrate_household_agents`，编排记录一个 `energy-saving` Agent 步骤；该 Agent 会话实际调用 `forecast_energy_budget`。Trace ID 为 `budget-forecast-frontdoor-20261025`。以 2026-10-01 至 10-03 每日 2、3、4 kWh、100 kWh 月预算为例，工具回报账期内（10 月 1 日至 31 日）估算约 93 kWh、预计余量约 7 kWh，状态为 `PACE_WITHIN_BUDGET`。这验证了主对话经编排到能源管家的调用链，不代表真实电表数据已接入。
+
+`plan_energy_optimization` 的低谷窗口以 15 分钟为候选起点，在用户提供的时间窗内查找电价最低的可运行窗口。能源管家调用只对其会话开放的 `calculate_energy_optimization` 生成原始报告；适配器按固定的 `evaluation_time_ms` 重算并逐字段比对，任何差异都拒绝下游使用。费用差额假设负载在运行时段内均匀耗能，只是电价变化下的估算，不是减少了相同数量的 kWh。待机候选要求测量读数显式提供 `load_mode: "standby"`、`control_device_id` 和带时区的近期 `recorded_at`；功率阈值默认 5 W。该标签本身仍不能证明断电安全，因此设备管家只会把已登记、已授权、房间已确认、在线、当前为 `on` 且明确支持 `turn_off` 的开关/插座送入待确认计划。低谷负载排程目前只返回建议，不持久化或执行定时器。
+
+本地 Mock 演示入口：`npm --prefix energy-saving run demo:optimization`。它使用临时设备清单、合成数据和脚本专用确认信号，输出 `tmp/energy-operations/optimization-demo-<id>.json`；确认信号只用于展现完整 Mock 流程，不等同于实际用户确认。
 
 ## 本地持久化
 

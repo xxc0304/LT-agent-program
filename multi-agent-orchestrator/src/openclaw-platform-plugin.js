@@ -13,11 +13,15 @@ const FRONTDOOR_TOOL = {
   label: "家庭多 Agent 协作",
   description: [
     "这是家庭用户主对话的通用多 Agent 调度入口。先理解用户本轮真实需求，再根据已登记 Agent 及能力拆成一个或多个步骤，设置必要依赖后一次提交。",
+    "对同一条用户消息只调用本工具一次；若消息包含多个子任务，将所有适用 Agent 放入同一份 plan.steps。不要为每个 Agent 分别发起工具调用，也不要在同一轮并行调用本工具。只有收到本次结果要求澄清/停止，且用户随后补充信息后，才重新提交新计划。",
     "你应按任务内容动态选择 Agent，不要固定每次只调用设备管家，也不要把所有 Agent 机械地依次调用。可并行的独立分析步骤可以并行；设备管家操作放在分析之后。",
     "只可使用插件当前登记清单中的 Agent 和能力，不得编造 Agent ID 或能力名。若目标不清楚，但补充信息后可能由现有能力完成，提交 decision=clarify 和一句面向用户的日常语言 question，不提交执行步骤；若确认当前能力清单没有能完成目标的功能，提交 decision=unsupported 和简短、诚实的 message，不提交执行步骤。用户回答澄清问题后，再结合新信息重新规划。多个现有能力可以组合完成的任务，应正常提交 dispatch 计划，不要因为没有一条完全同名的规则就判定不支持。",
+    "账期预算进度估算有专门的数据门槛：只有用户本轮已提供预算、账期起止日、统计截止日、从账期开始到截止日连续完整的逐日电量（至少 3 个完整日），并明确确认数据覆盖完整且没有漏天，才可派发 energy-saving:forecast_energy_budget。派发时必须把 budget_kwh、period_start、period_end、through_date、daily_totals 和 coverage_attested_complete 结构化放入该步骤的 input；daily_totals 每项格式为 {date, energy_kwh}。任一条件缺失、只有 1–2 天数据、日期有空档或完整性未确认时，只提交 decision=clarify 追问缺失信息；调度器还会在调用 Agent 前核对结构化数据，不完整时返回澄清并零派发；不得在同一计划里一边追问一边派发能源管家步骤。",
     "多设备操作必须作为一个完整任务交给设备管家，由它统一解析设备清单、校验候选计划和动作冲突；不要拆成多个可能各自执行的 device_action 步骤。",
     "工具会校验 Agent 白名单、能力、步骤依赖和设备动作冲突。若 BLOCKED 的 reason_code 是 DEVICE_ACTION_DETAILS_REQUIRED 或 MULTIPLE_DEVICE_ACTION_STEPS_REQUIRE_AGGREGATION，这是计划结构问题：不要把内部错误转述给用户；将完整设备意图合并成单个设备管家操作步骤，只自动重提一次。若仍被阻断，或用户目标本身不清楚，再用自然语言向用户解释/澄清。其他需要澄清、确认或报告冲突的结果，必须用自然、简短的日常语言询问并等待答复。其他 BLOCKED 或 FAILED 结果应说明安全停止原因，不得绕过限制。",
     "业务 Agent 只提供各自职责内的分析或建议；只有设备管家可以执行设备操作，并且必须遵守其已有设备登记、授权、确认、执行和状态回读规则。不得把模型给出的计划当作执行授权。",
+    "如果本工具结果为 FAILED、BLOCKED，或某个步骤没有成功结果，只能说明对应分析/调用未完成；不得用用户输入自行补算来替代 Agent，不得推测电器故障、能耗原因或设备状态，也不得把超时后才到的后台结果说成本次调用成功。只可转述明确成功步骤的 summary/result。",
+    "面向普通家庭用户用自然、简短的中文交流；不要用报告体开场、客服式称呼或用户未要求的表格。能耗分析如提示计量口径尚未核实，只说明结果是按用户提供的读数汇总；不得猜测或点名具体哪些设备/读数可能重叠，除非工具结果明确给出这些关系。",
     "若工具返回 UNSUPPORTED，使用返回的 message 向用户说明目前缺少相应功能；不要尝试编造别的 Agent/能力或绕过平台调度器。",
     "Agent 没有登记、Gateway 拒绝、结果不确定或执行失败时，如实告知用户，不得声称成功或自动重复可能已经产生副作用的调用。",
   ].join(" "),
@@ -61,9 +65,15 @@ const DEFAULT_AGENTS = Object.freeze([
   },
   {
     agent_id: "energy-saving",
-    name: "节能 Agent",
+    name: "能源管家",
     description: "分析能耗与节能机会，提出节能建议，不执行设备操作。",
-    capabilities: [{ name: "evaluate_energy_opportunity", description: "评估家庭节能机会并给出建议", effect: "planning" }],
+    capabilities: [
+      { name: "evaluate_energy_opportunity", description: "根据家庭事件评估节能机会并给出建议", effect: "planning" },
+      { name: "analyze_energy_usage", description: "只分析用户提供的区间用电读数，不补造缺失数据", effect: "read_only" },
+      { name: "evaluate_energy_effect", description: "比较用户提供的调整前后读数，不推断因果", effect: "read_only" },
+      { name: "forecast_energy_budget", description: "根据完整逐日电量和预算估算本期用电", effect: "read_only" },
+      { name: "plan_energy_optimization", description: "根据用户提供的电价和运行时间给出排程建议，不启动设备", effect: "planning" },
+    ],
   },
   {
     agent_id: "device-manager",

@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $passed = 0
 . (Join-Path $PSScriptRoot 'Package-Exclusions.ps1')
+. (Join-Path $PSScriptRoot 'Package-Archive.ps1')
 
 function Assert-Condition {
     param([bool]$Condition, [string]$Message)
@@ -24,6 +25,7 @@ foreach ($required in @(
     'deployment\install-agent-stack.mjs',
     'deployment\install-agent-stack.test.mjs',
     'deployment\verify-agent-stack.mjs',
+    'deployment\Package-Archive.ps1',
     'deployment\Verify-Agent-Integration.ps1',
     'deployment\Run-Agent-Integration-Demo.ps1'
 )) {
@@ -55,6 +57,9 @@ Assert-Condition -Condition ($installerSource.Contains('$repoRoot = Split-Path -
 Assert-Condition -Condition ($installerSource.Contains("'2026.7.1-2'")) -Message 'Installer pins the required OpenClaw runtime version'
 Assert-Condition -Condition ($installerSource.Contains('Assert-SafeOpenClawExecutable')) -Message 'Installer refuses OpenClaw CMD/BAT shims for strict JSON writes'
 Assert-Condition -Condition ($installerSource.Contains("'mock'")) -Message 'Mock verification explicitly selects the Mock backend'
+foreach ($lockAuthSetting in @('DEVICE_MANAGER_LOCK_AUTH_URL', 'DEVICE_MANAGER_LOCK_AUTH_PUBLIC_KEY', 'DEVICE_MANAGER_LOCK_AUTH_ISSUER', 'DEVICE_MANAGER_LOCK_AUTH_AUDIENCE')) {
+    Assert-Condition -Condition ($installerSource.Contains("'$lockAuthSetting'")) -Message "PowerShell Mock verification isolates lock-auth setting $lockAuthSetting"
+}
 Assert-Condition -Condition ($installerSource.Contains('plugins.entries.device-manager.config.frontdoorAgentId')) -Message 'Installer configures the selected OpenClaw chat Agent in the plugin'
 Assert-Condition -Condition ($installerSource.Contains('EnableSQLiteMemory') -and $installerSource.Contains('MemoryDatabasePath')) -Message 'Installer exposes SQLite memory as an explicit opt-in with a path override'
 Assert-Condition -Condition ($installerSource.Contains("plugins.entries.device-manager.config.memoryBackend") -and $installerSource.Contains("plugins.entries.device-manager.config.memoryDatabasePath")) -Message 'Installer writes SQLite settings only to the device-manager plugin config'
@@ -64,6 +69,7 @@ if ($packageBuilder) {
     Assert-Condition -Condition ($packageBuilder.Contains('deployment/install-agent-stack.mjs')) -Message 'Package builder includes the Linux-native installer'
     Assert-Condition -Condition ($packageBuilder.Contains('deployment/verify-agent-stack.mjs')) -Message 'Package builder includes the Node.js local/Mock verification entry point'
     Assert-Condition -Condition ($packageBuilder.Contains('deployment/Package-Exclusions.ps1')) -Message 'Package builder includes the tested package-exclusion rules'
+    Assert-Condition -Condition ($packageBuilder.Contains('deployment/Package-Archive.ps1') -and $packageBuilder.Contains('New-PortableZipArchive')) -Message 'Package builder writes Linux-compatible ZIP entry paths'
     Assert-Condition -Condition ($packageBuilder.Contains('Install-Agent-Stack.cmd')) -Message 'Package builder includes the one-click CMD entry point'
 }
 Assert-Condition -Condition ($quickStart.Contains('deployment/install-agent-stack.mjs')) -Message 'Quick start documents the Linux-native installer'
@@ -77,7 +83,8 @@ if (Test-Path -LiteralPath $deliveryReadmePath -PathType Leaf) {
 $linuxWorkflowPath = Join-Path $repoRoot '.github\workflows\agent-stack.yml'
 if (Test-Path -LiteralPath $linuxWorkflowPath -PathType Leaf) {
     $linuxWorkflow = Get-Content -LiteralPath $linuxWorkflowPath -Raw -Encoding UTF8
-    Assert-Condition -Condition ($linuxWorkflow.Contains('working-directory: device-manager') -and $linuxWorkflow.Contains('working-directory: multi-agent-orchestrator') -and $linuxWorkflow.Contains('--legacy-peer-deps')) -Message 'Ubuntu workflow installs both direct dependency sets without resolving the OpenClaw peer'
+    Assert-Condition -Condition ($linuxWorkflow.Contains('working-directory: device-manager') -and $linuxWorkflow.Contains('working-directory: multi-agent-orchestrator') -and $linuxWorkflow.Contains('--legacy-peer-deps')) -Message 'Ubuntu workflow installs both direct dependency sets for Mock tests'
+    Assert-Condition -Condition ($linuxWorkflow.Contains('openclaw@2026.7.1-2') -and $linuxWorkflow.Contains('--include=peer') -and $linuxWorkflow.Contains('plugins validate')) -Message 'Ubuntu workflow installs the target OpenClaw SDK and validates both plugins'
 }
 $cmdLauncher = Get-Content -LiteralPath (Join-Path $repoRoot 'Install-Agent-Stack.cmd') -Raw
 Assert-Condition -Condition ($cmdLauncher.Contains('%*')) -Message 'One-click CMD launcher forwards optional installer parameters'
@@ -100,6 +107,7 @@ $scriptFiles = @(
     (Join-Path $repoRoot 'Verify-Agent-Stack.ps1'),
     (Join-Path $repoRoot 'deployment\Install-Agent-Stack.ps1'),
     (Join-Path $repoRoot 'deployment\Package-Exclusions.ps1'),
+    (Join-Path $repoRoot 'deployment\Package-Archive.ps1'),
     (Join-Path $repoRoot 'deployment\Verify-Agent-Integration.ps1'),
     (Join-Path $repoRoot 'deployment\Run-Agent-Integration-Demo.ps1'),
     (Join-Path $repoRoot 'deployment\Test-DeploymentPackage.ps1')
@@ -121,6 +129,29 @@ foreach ($scriptPath in $scriptFiles) {
     Assert-Condition -Condition ($parseErrors.Count -eq 0) -Message "PowerShell syntax parses: $([System.IO.Path]::GetFileName($scriptPath))"
 }
 
+$portableZipTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("lt-agent-zip-test-" + [guid]::NewGuid().ToString('N'))
+$portableZipSource = Join-Path $portableZipTestRoot 'source'
+$portableZipPath = Join-Path $portableZipTestRoot 'portable.zip'
+try {
+    $null = New-Item -ItemType Directory -Path (Join-Path $portableZipSource 'nested') -Force
+    [System.IO.File]::WriteAllText((Join-Path $portableZipSource 'nested\check.txt'), 'zip-path-check')
+    New-PortableZipArchive -SourceDirectory $portableZipSource -ArchivePath $portableZipPath
+    $portableArchive = [System.IO.Compression.ZipFile]::OpenRead($portableZipPath)
+    try {
+        $portableEntries = @($portableArchive.Entries | ForEach-Object { $_.FullName })
+        Assert-Condition -Condition ($portableEntries -contains 'nested/check.txt') -Message 'ZIP writer preserves nested directory layout'
+        Assert-Condition -Condition (-not ($portableEntries | Where-Object { $_.Contains('\') })) -Message 'ZIP writer uses forward-slash entry paths for Linux'
+    }
+    finally { $portableArchive.Dispose() }
+}
+finally {
+    $resolvedZipTestRoot = [System.IO.Path]::GetFullPath($portableZipTestRoot)
+    $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+    if ($resolvedZipTestRoot.StartsWith($resolvedTempRoot, [System.StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolvedZipTestRoot).StartsWith('lt-agent-zip-test-')) {
+        Remove-Item -LiteralPath $resolvedZipTestRoot -Recurse -Force
+    }
+}
+
 if (-not $ArchivePath -and -not ($InstallerChecks -or $InstallFlow)) {
     $artifactDirectory = Join-Path $repoRoot 'output\deployment'
     if (Test-Path -LiteralPath $artifactDirectory -PathType Container) {
@@ -135,7 +166,9 @@ if ($ArchivePath) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ArchivePath).Path)
     try {
-        $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+        $rawEntries = @($archive.Entries | ForEach-Object { $_.FullName })
+        Assert-Condition -Condition (-not ($rawEntries | Where-Object { $_.Contains('\') })) -Message 'ZIP entries use forward slashes for Linux extraction'
+        $entries = @($rawEntries | ForEach-Object { $_.Replace('\', '/') })
         foreach ($expected in @(
             'Install-Agent-Stack.cmd',
             'Verify-Agent-Stack.ps1',
@@ -145,6 +178,7 @@ if ($ArchivePath) {
             'deployment/verify-agent-stack.mjs',
             'docs/linux-development-and-validation.md',
             'deployment/Package-Exclusions.ps1',
+            'deployment/Package-Archive.ps1',
             'deployment/Verify-Agent-Integration.ps1',
             'deployment/Run-Agent-Integration-Demo.ps1',
             'deployment/Test-DeploymentPackage.ps1',

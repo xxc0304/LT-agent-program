@@ -1,4 +1,7 @@
-const DEFAULT_TIMEOUT_MS = 45_000;
+// LLM-backed planning/analysis Agents can need more than one model/tool turn.
+// The OpenClaw public subagent API caps waits at 120 seconds, so use that
+// available window by default and still fail closed without resending.
+const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_HISTORY_LIMIT = 50;
 const DEFAULT_MAX_MESSAGE_BYTES = 64 * 1024;
 const FORBIDDEN_KEYS = new Set([

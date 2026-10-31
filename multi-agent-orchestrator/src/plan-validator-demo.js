@@ -66,7 +66,7 @@ const safePlan = {
   schema_version: "0.1",
   plan_id: "demo-safe-energy-plan",
   trace_id: "trace-demo-safe-energy-plan",
-  goal: "占用条件符合时，由节能 Agent 建议关闭学习灯",
+  goal: "占用条件符合时，由能源管家建议关闭学习灯",
   steps: [
     {
       step_id: "read-occupancy",

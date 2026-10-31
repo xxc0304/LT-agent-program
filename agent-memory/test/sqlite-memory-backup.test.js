@@ -38,6 +38,9 @@ test("online backup and restore preserve a consistent SQLite memory snapshot", a
     assert.equal(backup.success, true);
     assert.equal(backup.encrypted, false);
     assert.equal(backup.memory_count, 1);
+    if (process.platform !== "win32") {
+      assert.equal((await fs.stat(backupPath)).mode & 0o777, 0o600);
+    }
     assert.deepEqual(await fs.readFile(databasePath), sourceBeforeBackup);
 
     await store.saveExplicitPreference({
@@ -51,6 +54,9 @@ test("online backup and restore preserve a consistent SQLite memory snapshot", a
     assert.equal(restored.success, true);
     assert.equal(restored.encrypted, false);
     assert.equal(restored.memory_count, 1);
+    if (process.platform !== "win32") {
+      assert.equal((await fs.stat(restoredPath)).mode & 0o777, 0o600);
+    }
 
     const recoveredStore = new PreferenceMemoryStore({ backend: "sqlite", databasePath: restoredPath });
     try {

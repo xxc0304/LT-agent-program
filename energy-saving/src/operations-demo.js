@@ -32,6 +32,17 @@ export function buildMockOperationsReport() {
     budget: { period_kwh: 2.0, period_cost: 2.0 },
   });
   const { analysis, strategy } = energyAgentReport;
+  const budgetForecast = energyAgent.forecastEnergyBudget({
+    budget_kwh: 100,
+    period_start: "2026-10-01",
+    period_end: "2026-10-31",
+    through_date: "2026-10-16",
+    coverage_attested_complete: true,
+    daily_totals: Array.from({ length: 16 }, (_, index) => ({
+      date: new Date(Date.parse("2026-10-01T00:00:00Z") + index * 86_400_000).toISOString().slice(0, 10),
+      energy_kwh: 3,
+    })),
+  });
   const effectEvaluation = energyAgent.evaluateEnergyEffect({
     baseline: {
       start_at: "2026-10-15T00:00:00.000Z",
@@ -96,11 +107,13 @@ export function buildMockOperationsReport() {
     generated_at: new Date(now).toISOString(),
     energy_analysis: analysis,
     energy_strategy: strategy,
+    energy_budget_forecast: budgetForecast,
     effect_evaluation: effectEvaluation,
     maintenance_plan: maintenance,
     interpretation: [
       "输入均为合成 Mock 数据，不是实时电表或真实 HA 诊断。",
       "能耗合计仅覆盖提交的区间读数，数据完整度未知，不能代表完整账期。",
+      "预算进度使用独立的合成逐日数据，完整性声明只对演示夹具成立；按平均速度估算，不代表真实账单或预测。",
       "异常项是复核候选，不是已确认浪费或故障。",
       "节能策略只提供建议；维护异常只提供排查步骤，不会控制、重启或维修设备。",
       "前后效果为一小时合成样本的描述性比较，不代表持续或因果节能。",
@@ -149,6 +162,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       report_status: report.report_status,
       total_kwh: report.energy_analysis.summary.total_kwh,
       total_cost: report.energy_analysis.summary.cost,
+      budget_pace_status: report.energy_budget_forecast.status,
+      projected_period_kwh: report.energy_budget_forecast.estimate?.projected_period_kwh ?? null,
       observed_before_after_delta_kwh: report.effect_evaluation.observed_change.baseline_minus_follow_up_kwh,
       effect_causality: report.effect_evaluation.causality,
       energy_recommendations: report.energy_strategy.recommendations.length,
