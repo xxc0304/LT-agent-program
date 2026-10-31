@@ -2,7 +2,7 @@
 
 > 给换设备后的 Codex/协作者：先阅读本文件和根目录 `AGENTS.md`，再开始工作。不要重新研究已经完成的内容，也不要要求用户重复粘贴 API Key。当前工作区的密钥和本地数据均不在 Git 中。
 
-更新时间：2026-10-18
+更新时间：2026-10-31
 
 ## 1. 项目目标
 
@@ -318,3 +318,10 @@ node src/evaluate-scb.js --manifest "data\scb\manifest.jsonl" --per-label 3 --ou
 - 在隔离 Ubuntu Profile 中，OpenClaw Gateway 健康检查通过，`device-manager` 与 `platform-orchestrator` 均加载，插件错误 0；通过 Gateway `tools.invoke` 写入并读回合成 `comfort_temperature_c=22` 偏好。容器重启后仍可读回，目录权限 `0700`、SQLite 数据库 `0600`。SQLite 备份专项测试 6/6 通过，新备份和恢复库权限均 `0600`。Gateway 未连模型、HA 或真实设备。
 - 当前 registry 的精确版本审计结果为 17 项（1 严重、10 高危、6 中危）。固定版本按项目组要求保持 `2026.7.1-2`；没有运行 `npm audit fix` 或自动升级。此数值较早先同日 15 项的记录新增 `glob`、`minimatch`，是当前 registry 解析结果。
 - 隔离验收 Gateway 已正常关闭，临时 token 已删除。容器 `lt-agent-local-ubuntu24-validation-20261031` 已停止但保留；专用数据卷 `lt-agent-local-ubuntu24-validation-data-20261031` 保留，供后续继续验收。卷内只含合成测试记忆与验收文件。
+
+## 2026-10-31 交付收尾状态
+
+- 更正交付验收矩阵、交付包说明和快速开始文档中的依赖审计数量为当前记录的 17 项（1 严重、10 高危、6 中危）；沿用用户此前对固定 `2026.7.1-2` 的风险接受，不升级 OpenClaw、不修改依赖树。
+- 重新生成交付包 `output/deployment/LT-agent-program-deployment-v0.1.34.zip`，310 个 ZIP 条目，SHA-256 `4A71CA0BB13215AF09A4C52248F5A6CB1281DD36040123019944EE4529275BEC`。Windows 包归档静态验收 83/83 通过；功能代码沿用 v0.1.33 已通过的 Debian/Ubuntu 11 阶段、582 项单元测试与 11 项 Mock 验收。v0.1.34 更新了交付说明和风险记录。
+- 根 `.gitignore` 增加本机交付输出、Node 编译缓存、OpenClaw 工作区状态、USER 模板和未审核标注草稿排除规则。提交前对拟提交内容做了凭据格式筛查（0 项命中）和 `git diff --check`（通过）。输出包、A/B/C 实验原始结果和 `implement-stage/` 草稿未进入代码提交；这些本机材料仍保留。
+- 代码实现提交为 `f3aafa4`；本交接状态在后续本机提交中补记。推送没有完成：`git push` 无法连接 `github.com:443`，GitHub 连接器也报告当前连接对该仓库 `push=false`。PR #1 已于 2026-10-24 合并，因此这些新改动尚无远程 PR 或对应 CI 结果；取得仓库写权限并恢复 HTTPS 连接后，需将本地提交推送并为新改动开 PR，等待 CI。
