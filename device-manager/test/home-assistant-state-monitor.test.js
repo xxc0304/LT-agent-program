@@ -68,6 +68,15 @@ function makeMonitor(options = {}) {
   });
 }
 
+async function waitForCondition(predicate, description, { timeoutMs = 1500, intervalMs = 5 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  assert.fail(`Timed out waiting for ${description}`);
+}
+
 test("只订阅 HA state_changed 并向回调发送脱敏变化摘要", async () => {
   const changes = [];
   const monitor = makeMonitor({ onStateChange: (event) => changes.push(event) });
@@ -352,7 +361,10 @@ test("真实 HA 模拟链路会从 WebSocket 故障事件走到告警、恢复�
     const started = await monitorTools.start_household_device_monitor();
     assert.equal(started.success, true);
     assert.equal(started.backend_mode, "home-assistant");
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForCondition(
+      () => homeAssistant.getEvents({ event_type: "diagnostic_alert", device_id: "light.study" }).length === 1,
+      "the initial offline alert",
+    );
     assert.equal(homeAssistant.getEvents({ event_type: "diagnostic_alert", device_id: "light.study" }).length, 1);
 
     currentState = { ...currentState, state: "off" };
@@ -371,7 +383,10 @@ test("真实 HA 模拟链路会从 WebSocket 故障事件走到告警、恢复�
         },
       },
     }) });
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await waitForCondition(
+      () => homeAssistant.getEvents({ event_type: "diagnostic_recovered", device_id: "light.study" }).length === 1,
+      "the recovery event",
+    );
 
     const status = monitorTools.get_household_device_monitor_status();
     const recoveryEvents = homeAssistant.getEvents({ event_type: "diagnostic_recovered", device_id: "light.study" });
@@ -400,7 +415,10 @@ test("真实 HA 模拟链路会从 WebSocket 故障事件走到告警、恢复�
         },
       },
     }) });
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await waitForCondition(
+      () => homeAssistant.getEvents({ event_type: "diagnostic_alert", device_id: "light.study" }).length === 2,
+      "the second offline alert",
+    );
     assert.equal(homeAssistant.getEvents({ event_type: "diagnostic_alert", device_id: "light.study" }).length, 2);
 
     const removedState = currentState;
@@ -414,7 +432,10 @@ test("真实 HA 模拟链路会从 WebSocket 故障事件走到告警、恢复�
         data: { entity_id: "light.study", old_state: removedState, new_state: null },
       },
     }) });
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await waitForCondition(
+      () => homeAssistant.getEvents({ event_type: "diagnostic_tracking_ended", device_id: "light.study" }).length === 1,
+      "the tracking-ended event after entity removal",
+    );
 
     const trackingEndedEvents = homeAssistant.getEvents({ event_type: "diagnostic_tracking_ended", device_id: "light.study" });
     assert.equal(monitorTools.get_household_device_monitor_status().last_diagnosis.alerts.some((item) => item.device_id === "light.study"), false);

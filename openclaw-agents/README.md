@@ -3,7 +3,7 @@
 这里保存项目中两个业务 Agent 的可迁移工作区模板：
 
 - `learning-companion/`：学习伴学 Agent，只负责把可信视觉/传感器结果整理为 `learning_behavior` Event，包含 `learning-behavior-review` Skill；
-- `energy-saving/`：节能 Agent，只负责根据 Event 生成 `device_action` Task，不直接控制设备，包含 `energy-planning` Skill。
+- `energy-saving/`：能源管家，依据家庭 Event 生成 `device_action` Task；处理低谷排程和预算进度估算时使用只读计算工具。它不直接控制设备，包含 `energy-planning` Skill。
 - `security-watch/`：安防看护 Agent 的事件/Skill 草案，对应结构化事件分诊；未冻结、未注册，且不直接控制设备。
 
 ## 当前开发机状态

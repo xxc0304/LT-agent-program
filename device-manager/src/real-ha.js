@@ -100,7 +100,7 @@ function validatePercentage(value, name) {
   return null;
 }
 
-function serviceFor(device, action, parameters, confirmed) {
+function serviceFor(device, action, parameters, confirmed, lockAuthorizationVerifier, lockAuthorizationProof, lockAuthorizationContext) {
   const data = { entity_id: device.device_id };
 
   const unsupportedCapability = getExplicitlyUnsupportedAction(device.capabilities, action);
@@ -120,7 +120,23 @@ function serviceFor(device, action, parameters, confirmed) {
       reason_code: confirmationPolicy.reason_code,
     });
   }
-
+  if (action === "unlock") {
+    const authorization = lockAuthorizationVerifier?.verifyLockAuthorization?.({
+      proof: lockAuthorizationProof,
+      expected: {
+        ...lockAuthorizationContext,
+        device_id: device.device_id,
+        action,
+      },
+    });
+    if (authorization?.success !== true) {
+      return failure(
+        authorization?.error?.code ?? "TRUSTED_AUTHENTICATION_REQUIRED",
+        authorization?.error?.message ?? "开锁需要可信认证界面的短时授权；普通聊天确认不能代替认证。",
+        { device_id: device.device_id, action, reason_code: "TRUSTED_AUTHENTICATION_REQUIRED" },
+      );
+    }
+  }
   if (device.domain === "light") {
     if (action === "turn_on" || action === "turn_off") return { service: action, data };
     if (action === "set_brightness") {
@@ -176,7 +192,7 @@ function serviceFor(device, action, parameters, confirmed) {
  * the OpenClaw tools can switch backend without changing prompts or contracts.
  */
 export class RealHomeAssistant {
-  constructor({ baseUrl, token, entityAllowlist, confirmationRequiredEntityIds, fetchImpl = globalThis.fetch, timeoutMs = 8_000, registryClient = null, eventRetentionLimit = 200, eventLedger } = {}) {
+  constructor({ baseUrl, token, entityAllowlist, confirmationRequiredEntityIds, fetchImpl = globalThis.fetch, timeoutMs = 8_000, registryClient = null, eventRetentionLimit = 200, eventLedger, lockAuthorizationVerifier = null } = {}) {
     if (!baseUrl) throw new Error("使用真实 Home Assistant 时必须设置 HA_URL");
     if (!token) throw new Error("使用真实 Home Assistant 时必须设置 HA_TOKEN");
     if (typeof fetchImpl !== "function") throw new Error("当前 Node.js 环境不支持 fetch");
@@ -188,6 +204,7 @@ export class RealHomeAssistant {
     this.registryClient = registryClient;
     this.entityAllowlist = entityAllowlist?.length ? new Set(entityAllowlist) : null;
     this.confirmationRequiredEntityIds = new Set(confirmationRequiredEntityIds ?? []);
+    this.lockAuthorizationVerifier = lockAuthorizationVerifier;
     this.auditLog = [];
     if (eventLedger !== undefined
       && (typeof eventLedger.append !== "function" || typeof eventLedger.list !== "function")) {
@@ -324,7 +341,7 @@ export class RealHomeAssistant {
     };
   }
 
-  async controlDevice({ device_id, action, parameters = {}, confirmed = false, trace_id = null, task_id = null, idempotency_key = null } = {}) {
+  async controlDevice({ device_id, action, parameters = {}, confirmed = false, lock_authorization_proof, lock_authorization_context, trace_id = null, task_id = null, idempotency_key = null } = {}) {
     if (!device_id || !action) {
       return failure("INVALID_ARGUMENT", "device_id 和 action 是必填参数");
     }
@@ -352,7 +369,15 @@ export class RealHomeAssistant {
       return failure("DEVICE_UNAVAILABLE", `设备当前不可用：${before.name}`, { device_id });
     }
 
-    const mapping = serviceFor(before, action, parameters, confirmed);
+    const mapping = serviceFor(
+      before,
+      action,
+      parameters,
+      confirmed,
+      this.lockAuthorizationVerifier,
+      lock_authorization_proof,
+      lock_authorization_context,
+    );
     if (mapping.success === false) {
       this.eventLedger.append({
         event_type: "action_failed",
@@ -519,7 +544,7 @@ export class RealHomeAssistant {
 
     for (const step of steps) {
       const device = preflightStates.get(step.device_id);
-      const actionMapping = serviceFor(device, step.action, step.parameters ?? {}, false);
+      const actionMapping = serviceFor(device, step.action, step.parameters ?? {}, false, this.lockAuthorizationVerifier);
       if (actionMapping.success === false) {
         return failure("SCENE_PREFLIGHT_FAILED", "场景中有设备动作不受支持或参数无效；整个场景未执行", {
           scene_id,

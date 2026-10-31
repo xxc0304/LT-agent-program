@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
+import { generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { Check } from "typebox/value";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,12 +11,16 @@ import { EnergySavingAgent } from "../../energy-saving/src/energy-agent.js";
 import { MockHomeAssistant } from "../src/mock-ha.js";
 import { AGENT_PLAN_TOOL_DEFINITIONS, createAgentPlanTools } from "../src/agent-plan-tools.js";
 import { AgentApprovalStateStore } from "../src/agent-approval-state-store.js";
+import {
+  createEd25519LockAuthorizationVerifier,
+  createHttpLockAuthorizationProvider,
+} from "../src/lock-authorization.js";
 import { createDeviceTaskRuntime } from "../src/task-runtime.js";
 import { createDeviceToolRuntime } from "../src/tools.js";
 
 function fixture(options = {}) {
-  const { devices, ...toolOptions } = options;
-  const homeAssistant = new MockHomeAssistant({ devices });
+  const { devices, lockAuthorizationVerifier, ...toolOptions } = options;
+  const homeAssistant = new MockHomeAssistant({ devices, lockAuthorizationVerifier });
   const baseRuntime = createDeviceToolRuntime(homeAssistant);
   const deviceRuntime = toolOptions.deviceRuntime ?? baseRuntime;
   const energyAgent = new EnergySavingAgent({
@@ -111,7 +117,7 @@ test("明确的单设备普通操作默认免二次确认，并通过设备回�
   }
 });
 
-test("门锁的锁定和解锁仍要求后续明确确认；confirmed=true 不能绕过", async () => {
+test("门锁动作先要求聊天批准；拒绝时不执行", async () => {
   const { homeAssistant, tools } = fixture();
   const cases = [
     { device_id: "lock.front_door", action: "lock", state: "locked" },
@@ -133,6 +139,134 @@ test("门锁的锁定和解锁仍要求后续明确确认；confirmed=true 不�
   }
 
   assert.equal(homeAssistant.getAuditLog().length, 0);
+});
+
+test("缺少可信认证服务时，聊天批准仍不能解锁", async () => {
+  const { homeAssistant, tools } = fixture();
+  const before = homeAssistant.getState({ device_id: "lock.front_door" }).device;
+  const pending = await tools.requestDeviceAction({ device_id: "lock.front_door", action: "unlock" });
+  assert.equal(pending.workflow_status, "WAITING_FOR_APPROVAL");
+
+  const result = await tools.resolveApproval({
+    approval_id: pending.approval.approval_id,
+    decision: "approve",
+  });
+
+  assert.equal(result.workflow_status, "TRUSTED_AUTHENTICATION_REQUIRED");
+  assert.equal(result.execution_performed, false);
+  assert.deepEqual(homeAssistant.getState({ device_id: "lock.front_door" }).device, before);
+  assert.equal(homeAssistant.getAuditLog().length, 0);
+});
+
+test("可信认证凭据只在服务端链路中传递并绑定当前审批与计划", async () => {
+  let requestedContext;
+  let verifierInput;
+  const { homeAssistant, tools } = fixture({
+    lockAuthorizationVerifier: {
+      verifyLockAuthorization(input) {
+        verifierInput = input;
+        return input.proof === "opaque-test-proof"
+          ? { success: true, subject: "test-household-user" }
+          : { success: false, error: { code: "LOCK_AUTHORIZATION_INVALID", message: "invalid" } };
+      },
+    },
+    lockAuthorizationProvider: async (context) => {
+      requestedContext = context;
+      return "opaque-test-proof";
+    },
+  });
+  const pending = await tools.requestDeviceAction({ device_id: "lock.front_door", action: "unlock" });
+  const result = await tools.resolveApproval({
+    approval_id: pending.approval.approval_id,
+    decision: "approve",
+  });
+
+  assert.equal(result.workflow_status, "COMPLETED");
+  assert.equal(homeAssistant.getState({ device_id: "lock.front_door" }).device.state, "unlocked");
+  assert.equal(requestedContext.approval_id, pending.approval.approval_id);
+  assert.equal(requestedContext.plan_id, pending.approval.plan_id);
+  assert.equal(requestedContext.device_id, "lock.front_door");
+  assert.equal(requestedContext.action, "unlock");
+  assert.equal(verifierInput.proof, "opaque-test-proof");
+  assert.deepEqual(verifierInput.expected, {
+    ...requestedContext,
+    device_id: "lock.front_door",
+    action: "unlock",
+  });
+  assert.equal(JSON.stringify(homeAssistant.getAuditLog()).includes("opaque-test-proof"), false);
+});
+
+test("本机假认证服务的有效授权可完成 Mock 开锁，错绑授权在设备写入前被拒绝", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const publicKeyPem = publicKey.export({ type: "spki", format: "pem" });
+  const issuer = "local-test-lock-auth";
+  const audience = "lt-agent-device-manager";
+  let mismatchDevice = false;
+  let requestedPayload;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    requestedPayload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    const claims = {
+      iss: issuer,
+      aud: audience,
+      sub: "local-test-user",
+      jti: randomUUID(),
+      iat: nowSeconds,
+      exp: nowSeconds + 45,
+      ...requestedPayload,
+      ...(mismatchDevice ? { device_id: "lock.back_door" } : {}),
+    };
+    const header = Buffer.from(JSON.stringify({ alg: "EdDSA", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const signedContent = `${header}.${payload}`;
+    const proof = `${signedContent}.${sign(null, Buffer.from(signedContent), privateKey).toString("base64url")}`;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ proof }));
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const provider = createHttpLockAuthorizationProvider({
+      url: `http://127.0.0.1:${address.port}/authorize`,
+    });
+    const lockAuthorizationVerifier = createEd25519LockAuthorizationVerifier({ publicKey: publicKeyPem, issuer, audience });
+    const first = fixture({ lockAuthorizationProvider: provider, lockAuthorizationVerifier });
+    const pending = await first.tools.requestDeviceAction({ device_id: "lock.front_door", action: "unlock" });
+    const completed = await first.tools.resolveApproval({
+      approval_id: pending.approval.approval_id,
+      decision: "approve",
+    });
+
+    assert.equal(completed.workflow_status, "COMPLETED");
+    assert.equal(first.homeAssistant.getState({ device_id: "lock.front_door" }).device.state, "unlocked");
+    assert.equal(requestedPayload.approval_id, pending.approval.approval_id);
+    assert.equal(requestedPayload.plan_id, pending.approval.plan_id);
+    assert.equal(requestedPayload.device_id, "lock.front_door");
+    assert.equal(requestedPayload.action, "unlock");
+    assert.equal(Object.hasOwn(requestedPayload, "pin"), false);
+    assert.equal(JSON.stringify(completed).includes("proof"), false);
+
+    mismatchDevice = true;
+    const second = fixture({ lockAuthorizationProvider: provider, lockAuthorizationVerifier });
+    const secondPending = await second.tools.requestDeviceAction({ device_id: "lock.front_door", action: "unlock" });
+    const rejected = await second.tools.resolveApproval({
+      approval_id: secondPending.approval.approval_id,
+      decision: "approve",
+    });
+
+    assert.equal(rejected.workflow_status, "EXECUTION_FAILED");
+    assert.equal(second.homeAssistant.getState({ device_id: "lock.front_door" }).device.state, "locked");
+    assert.equal(second.homeAssistant.getAuditLog().length, 0);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("显式标记为高风险的非门锁设备仍要求确认", async () => {
@@ -689,7 +823,7 @@ test("未认证的节能计划不会自动控制设备，明确确认后才由�
   assert.equal(homeAssistant.getAuditLog().at(-1).verified, true);
 });
 
-test("可信内部事件仅能自动执行节能 Agent 生成的关灯任务", async () => {
+test("可信内部事件仅能自动执行能源管家生成的关灯任务", async () => {
   const { homeAssistant, tools } = fixture();
   await tools.requestDeviceAction({ device_id: "light.living_room", action: "turn_on" });
   const task = {

@@ -285,7 +285,7 @@ export function createIndependentLearningEnergyWorkflow({
         trace_id: traceId,
         event: summarizeEvent(learningEvent),
         agents_involved: ["learning-companion"],
-        message: "学习伴学 Agent 已生成结构化事件，但事件未达到交给节能 Agent 的确定性门槛；未调用节能 Agent，也未操作设备。",
+        message: "学习伴学 Agent 已生成结构化事件，但事件未达到交给能源管家的确定性门槛；未调用能源管家，也未操作设备。",
       };
     }
 

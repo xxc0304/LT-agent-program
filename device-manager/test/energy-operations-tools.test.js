@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createEnergyOperationsTools, ENERGY_OPERATIONS_TOOL_DEFINITIONS } from "../src/energy-operations-tools.js";
+import {
+  createEnergyOperationsTools,
+  ENERGY_OPERATIONS_TOOL_DEFINITIONS,
+  ENERGY_OPTIMIZATION_CALCULATOR_TOOL_DEFINITION,
+} from "../src/energy-operations-tools.js";
 import { MaintenanceScheduleStore } from "../src/maintenance-store.js";
 import { MaintenanceReminderInbox } from "../src/maintenance-reminder-inbox.js";
 
@@ -254,7 +258,7 @@ test("维护完成历史支持稳定游标分页，翻页期间新增记录不�
   assert.equal((await tools.get_device_maintenance_plan({ completion_schedule_id: " " })).error.code, "INVALID_COMPLETION_HISTORY_OPTIONS");
 });
 
-test("OpenClaw 插件实际注册五个能耗和维护工具并路由到本地实现", async (t) => {
+test("OpenClaw 插件注册能耗和维护工具，并将预算估算限制在能源管家会话", async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "lt-openclaw-energy-maintenance-"));
   const previous = {
     memory: process.env.FAMILY_MEMORY_PATH,
@@ -279,20 +283,185 @@ test("OpenClaw 插件实际注册五个能耗和维护工具并路由到本地�
 
   const { default: plugin } = await import(`../src/openclaw-plugin.js?energy-maintenance=${Date.now()}-${Math.random()}`);
   const registered = new Map();
-  plugin.register({ pluginConfig: {}, registerTool(tool) { registered.set(tool.name, tool); } });
-  const names = ENERGY_OPERATIONS_TOOL_DEFINITIONS.map(({ name }) => name);
+  let calculatorFactory;
+  let calculatorReply = "";
+  let messageReadCount = 0;
+  const subagentCalls = [];
+  const runtimeConfig = {
+    session: { mainKey: "main" },
+    tools: {
+      sessions: { visibility: "all" },
+      agentToAgent: { enabled: true, allow: ["device-manager", "energy-saving"] },
+    },
+  };
+  const subagent = {
+    async getSessionMessages(params) {
+      subagentCalls.push({ method: "getSessionMessages", params });
+      messageReadCount += 1;
+      return messageReadCount === 1
+        ? { messages: [] }
+        : { messages: [{ role: "assistant", content: [{ type: "text", text: calculatorReply }] }] };
+    },
+    async run(params) {
+      subagentCalls.push({ method: "run", params });
+      const envelope = JSON.parse(params.message);
+      const calculatorTool = calculatorFactory({
+        agentId: "energy-saving",
+        sessionKey: "agent:energy-saving:main",
+        getRuntimeConfig: () => runtimeConfig,
+      });
+      assert.ok(calculatorTool, "能源管家会话应能获得只读计算工具");
+      const report = unpack(await calculatorTool.execute("calculator-tool-call", envelope.input));
+      calculatorReply = JSON.stringify(report);
+      return { runId: "run-energy-optimization-test" };
+    },
+    async waitForRun() { return { status: "ok" }; },
+  };
+  plugin.register({
+    pluginConfig: {},
+    config: runtimeConfig,
+    runtime: { subagent },
+    registerTool(tool, options) {
+      const name = options?.name ?? tool.name;
+      registered.set(name, tool);
+      if (name === "calculate_energy_optimization") calculatorFactory = tool;
+    },
+  });
+  const names = [
+    ...ENERGY_OPERATIONS_TOOL_DEFINITIONS.map(({ name }) => name),
+    ENERGY_OPTIMIZATION_CALCULATOR_TOOL_DEFINITION.name,
+  ];
   for (const name of names) assert.ok(registered.has(name), `缺少 OpenClaw 工具 ${name}`);
+  const optimizationSchema = ENERGY_OPERATIONS_TOOL_DEFINITIONS.find((tool) => tool.name === "plan_energy_optimization")?.inputSchema;
+  const tariffSchema = optimizationSchema?.properties?.tariff;
+  const tariffSegmentSchema = tariffSchema?.properties?.segments?.items;
+  assert.equal(tariffSchema?.type, "object");
+  assert.deepEqual(tariffSegmentSchema?.required?.slice().sort(), ["end", "name", "price_per_kwh", "start"]);
+  assert.deepEqual(
+    tariffSegmentSchema?.properties?.tier?.anyOf?.map((entry) => entry.const).sort(),
+    ["off_peak", "peak", "shoulder"],
+  );
+  assert.match(tariffSegmentSchema?.properties?.end?.description ?? "", /午夜写 00:00/);
+  assert.match(tariffSegmentSchema?.properties?.start?.pattern ?? "", /HH:mm|\\d/);
+  assert.match(optimizationSchema?.properties?.flexible_loads?.items?.properties?.deadline_at?.description ?? "", /次日 00:00/);
   const planSchema = ENERGY_OPERATIONS_TOOL_DEFINITIONS.find((tool) => tool.name === "get_device_maintenance_plan")?.inputSchema;
   assert.deepEqual([planSchema?.properties?.completion_limit?.minimum, planSchema?.properties?.completion_limit?.maximum], [1, 50]);
   assert.equal(planSchema?.properties?.completion_cursor?.type, "string");
   assert.equal(planSchema?.properties?.completion_schedule_id?.type, "string");
 
-  const invoke = async (name, params) => unpack(await registered.get(name).execute(`test-${name}`, params, undefined, undefined));
+  const energySessionContext = {
+    agentId: "energy-saving",
+    sessionKey: "agent:energy-saving:main",
+    sandboxed: false,
+    getRuntimeConfig: () => runtimeConfig,
+  };
+  const managerSessionContext = {
+    agentId: "device-manager",
+    sessionKey: "agent:device-manager:main",
+    sandboxed: false,
+    getRuntimeConfig: () => runtimeConfig,
+  };
+  const invoke = async (name, params, context) => {
+    const registeredTool = registered.get(name);
+    const tool = ["analyze_energy_usage", "evaluate_energy_effect", "forecast_energy_budget", "calculate_energy_optimization"].includes(name)
+      ? registeredTool(context)
+      : registeredTool;
+    assert.ok(tool, `${name} 应在当前 Agent 会话中注册`);
+    return unpack(await tool.execute(`test-${name}`, params, undefined, undefined));
+  };
+  for (const name of ["analyze_energy_usage", "evaluate_energy_effect"]) {
+    assert.equal(registered.get(name)(managerSessionContext), null, `${name} 不得向设备管家会话暴露`);
+    assert.ok(registered.get(name)(energySessionContext), `${name} 应开放给能源管家会话`);
+  }
   const result = await invoke("analyze_energy_usage", {
     readings: [{ device_id: "meter.mock", recorded_at: "2026-10-17T00:00:00.000Z", interval_kwh: 0.2 }],
-  });
+  }, energySessionContext);
   assert.equal(result.success, true);
   assert.equal(result.report.analysis.summary.total_kwh, 0.2);
+  const effectResult = await invoke("evaluate_energy_effect", {
+    device_ids: ["meter.mock"],
+    interval_minutes: 60,
+    baseline: {
+      start_at: "2026-10-17T00:00:00.000Z",
+      end_at: "2026-10-17T01:00:00.000Z",
+      readings: [{ device_id: "meter.mock", recorded_at: "2026-10-17T01:00:00.000Z", interval_kwh: 1 }],
+    },
+    follow_up: {
+      start_at: "2026-10-18T00:00:00.000Z",
+      end_at: "2026-10-18T01:00:00.000Z",
+      readings: [{ device_id: "meter.mock", recorded_at: "2026-10-18T01:00:00.000Z", interval_kwh: 0.7 }],
+    },
+  }, energySessionContext);
+  assert.equal(effectResult.report.status, "COMPARABLE");
+  const deviceManagerTool = registered.get("plan_energy_optimization")({
+    ...managerSessionContext,
+  });
+  assert.ok(deviceManagerTool);
+  assert.equal(registered.get("calculate_energy_optimization")({
+    agentId: "device-manager",
+    sessionKey: "agent:device-manager:main",
+    sandboxed: false,
+  }), null, "内部计算工具不得向设备管家会话暴露");
+  const energyCalculatorTool = calculatorFactory({
+    ...energySessionContext,
+  });
+  assert.ok(energyCalculatorTool);
+  const forecastFactory = registered.get("forecast_energy_budget");
+  assert.equal(forecastFactory({
+    agentId: "device-manager",
+    sessionKey: "agent:device-manager:main",
+    sandboxed: false,
+  }), null, "预算估算工具不得向设备管家会话暴露");
+  const forecastTool = forecastFactory({
+    ...energySessionContext,
+  });
+  assert.ok(forecastTool, "能源管家会话应能获得预算估算工具");
+  const forecastResult = unpack(await forecastTool.execute("forecast-tool-call", {
+    budget_kwh: 100,
+    period_start: "2026-10-01",
+    period_end: "2026-10-31",
+    through_date: "2026-10-03",
+    coverage_attested_complete: true,
+    daily_totals: [
+      { date: "2026-10-01", energy_kwh: 2 },
+      { date: "2026-10-02", energy_kwh: 3 },
+      { date: "2026-10-03", energy_kwh: 4 },
+    ],
+  }));
+  assert.equal(forecastResult.success, true);
+  assert.equal(forecastResult.report.estimate.projected_period_kwh, 93);
+  const optimizationInput = {
+    timezone: "Asia/Shanghai",
+    readings: [],
+    tariff: {
+      currency: "CNY",
+      segments: [
+        { name: "low", tier: "off_peak", start: "00:00", end: "12:00", price_per_kwh: 0.3 },
+        { name: "high", tier: "peak", start: "12:00", end: "00:00", price_per_kwh: 1.2 },
+      ],
+    },
+    flexible_loads: [{
+      load_id: "plugin-test-load",
+      name: "测试负载",
+      energy_kwh: 0.5,
+      duration_minutes: 60,
+      earliest_start: new Date().toISOString(),
+      deadline_at: new Date(Date.now() + 5 * 60 * 60_000).toISOString(),
+      user_marked_flexible: true,
+    }],
+  };
+  const optimization = unpack(await deviceManagerTool.execute("energy-opt-tool-call", optimizationInput));
+  assert.equal(optimization.success, true, JSON.stringify(optimization));
+  assert.equal(optimization.source, "CALLER_SUPPLIED_DATA_ONLY");
+  assert.equal(optimization.delegated_to, "energy-saving");
+  const subagentRun = subagentCalls.find((call) => call.method === "run");
+  assert.equal(subagentRun.params.sessionKey, "agent:energy-saving:main");
+  const delegatedEnvelope = JSON.parse(subagentRun.params.message);
+  assert.equal(delegatedEnvelope.operation, "plan_energy_optimization");
+  assert.equal(delegatedEnvelope.contract, "energy_optimization");
+  assert.equal(optimization.report.schedule_recommendations[0].status, "RECOMMENDATION_READY");
+  assert.equal(optimization.report.execution.device_control_performed, false);
+  assert.equal(optimization.device_action_workflow.status, "NO_ACTION_CANDIDATE");
   await invoke("save_maintenance_schedule", {
     maintenance_schedule: { schedule_id: "test-plan", device_id: "fan.mock", maintenance_type: "inspection" },
   });

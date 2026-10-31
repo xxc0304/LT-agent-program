@@ -4,6 +4,7 @@ import {
   OpenClawAgentCallError,
   OpenClawAgentClient,
 } from "../src/openclaw-agent-client.js";
+import { planEnergyOptimization } from "../../energy-saving/src/energy-optimization.js";
 
 const TRACE_ID = "trace-openclaw-001";
 
@@ -85,7 +86,7 @@ test("用 sessions_send 请求学习伴学 Agent，并校验 Event 契约与 tra
   assert.equal(result.trace_id, TRACE_ID);
 });
 
-test("校验节能 Agent 的 canonical Task，且不把策略批准权交给模型", async () => {
+test("校验能源管家的 canonical Task，且不把策略批准权交给模型", async () => {
   const { client } = clientFor(energyTask());
   const result = await client.invoke({
     agentId: "energy-saving",
@@ -100,7 +101,7 @@ test("校验节能 Agent 的 canonical Task，且不把策略批准权交给模�
   assert.equal("target" in result.output, false);
 });
 
-test("节能 Agent 可以用严格契约返回正常 NO_ACTION", async () => {
+test("能源管家可以用严格契约返回正常 NO_ACTION", async () => {
   const noAction = {
     schema_version: "0.1",
     outcome: "NO_ACTION",
@@ -116,6 +117,68 @@ test("节能 Agent 可以用严格契约返回正常 NO_ACTION", async () => {
     input: { event: { event_id: "evt-no-action" } },
   });
   assert.deepEqual(result.output, noAction);
+});
+
+test("能源管家低谷排程使用专用委派契约并与确定性结果严格比对", async () => {
+  const input = {
+    readings: [],
+    tariff: {
+      currency: "CNY",
+      segments: [
+        { name: "off_peak", start: "00:00", end: "12:00", price_per_kwh: 0.3 },
+        { name: "peak", start: "12:00", end: "00:00", price_per_kwh: 1.0 },
+      ],
+    },
+    timezone: "Asia/Shanghai",
+    evaluation_time_ms: Date.parse("2026-10-25T00:00:00.000Z"),
+  };
+  const expected = planEnergyOptimization({ ...input, now: input.evaluation_time_ms });
+  const { client, calls } = clientFor(expected);
+  const result = await client.invoke({
+    agentId: "energy-saving",
+    operation: "plan_energy_optimization",
+    contract: "energy_optimization",
+    traceId: TRACE_ID,
+    idempotencyKey: "req-energy-optimization-001",
+    input,
+  });
+
+  assert.deepEqual(result.output, expected);
+  const envelope = JSON.parse(calls[0].message);
+  assert.equal(envelope.operation, "plan_energy_optimization");
+  assert.equal(envelope.contract, "energy_optimization");
+  assert.match(envelope.response_rule, /calculate_energy_optimization/);
+  assert.equal(envelope.input.evaluation_time_ms, input.evaluation_time_ms);
+});
+
+test("能源管家低谷排程报告与确定性结果不一致时拒绝下游使用", async () => {
+  const input = {
+    readings: [],
+    tariff: { segments: [
+      { name: "day", start: "00:00", end: "12:00", price_per_kwh: 0.4 },
+      { name: "night", start: "12:00", end: "00:00", price_per_kwh: 0.4 },
+    ] },
+    evaluation_time_ms: Date.parse("2026-10-25T00:00:00.000Z"),
+  };
+  const incorrectReport = planEnergyOptimization({ ...input, now: input.evaluation_time_ms });
+  incorrectReport.execution.device_control_performed = true;
+  const { client } = clientFor(incorrectReport);
+
+  await assert.rejects(client.invoke({
+    agentId: "energy-saving",
+    operation: "plan_energy_optimization",
+    contract: "energy_optimization",
+    traceId: TRACE_ID,
+    idempotencyKey: "req-energy-optimization-invalid-001",
+    input,
+  }), { code: "INVALID_AGENT_OPTIMIZATION" });
+  assert.throws(() => client.invoke({
+    agentId: "energy-saving",
+    operation: "plan_energy_optimization",
+    traceId: TRACE_ID,
+    idempotencyKey: "req-energy-optimization-invalid-contract",
+    input,
+  }), { code: "AGENT_OPERATION_NOT_ALLOWED" });
 });
 
 test("NO_ACTION 不得缺字段、冒充来源或携带额外审批/执行字段", async (t) => {
@@ -177,7 +240,7 @@ test("拒绝 trace 或实际来源 Agent 不匹配的 Event", async (t) => {
   }
 });
 
-test("拒绝节能 Agent 输出不合规目标、trace 或 policy_decision 的 Task", async (t) => {
+test("拒绝能源管家输出不合规目标、trace 或 policy_decision 的 Task", async (t) => {
   for (const [name, task] of [
     ["wrong target", energyTask({ target_agent: "security-agent", target: "security-agent" })],
     ["wrong trace", energyTask({ trace_id: "trace-other" })],

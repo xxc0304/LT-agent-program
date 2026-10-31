@@ -44,7 +44,8 @@ function makeAdapter({ output, allow = true, runStatus = "ok" } = {}) {
       ]);
       return { runId: `run-${runCounter}` };
     },
-    async subagentWaitForRun() {
+    async subagentWaitForRun({ runId, timeoutMs }) {
+      calls.push({ type: "wait", runId, timeoutMs });
       return { status: runStatus };
     },
   });
@@ -86,6 +87,7 @@ test("OpenClaw adapter routes the structured plan step to a registered Agent ses
   assert.equal(run.envelope.protocol, "lt-platform-agent-task/0.1");
   assert.equal(run.envelope.capability, "evaluate_energy_opportunity");
   assert.equal(run.envelope.task, taskCall.task);
+  assert.equal(calls.find((call) => call.type === "wait").timeoutMs, 120_000);
 });
 
 test("OpenClaw target session respects the configured main key", () => {

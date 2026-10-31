@@ -358,7 +358,7 @@ test("步骤失败后停止整份计划，不继续执行后续设备动作或�
     handlers: {
       "energy-saving::plan_energy_action": async () => {
         calls.push("failing-plan");
-        throw new Error("模拟节能 Agent 故障");
+        throw new Error("模拟能源管家故障");
       },
       "device-manager::execute_device_action": async () => {
         calls.push("device-action");

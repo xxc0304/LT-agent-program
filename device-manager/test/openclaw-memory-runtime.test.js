@@ -224,6 +224,17 @@ test("OpenClaw 插件级 SQLite 配置优先于旧环境变量并使用指定家
   await memoryService.start({ logger: { info() {} } });
   stopMemoryService = () => memoryService.stop();
 
+  assert.doesNotThrow(() => plugin.register({
+    pluginConfig: { memoryBackend: "sqlite", memoryDatabasePath: databasePath },
+    registerTool() {},
+    registerService() {},
+  }));
+  assert.throws(() => plugin.register({
+    pluginConfig: { memoryBackend: "sqlite", memoryDatabasePath: legacyDatabasePath },
+    registerTool() {},
+    registerService() {},
+  }), /家庭记忆存储已经打开/);
+
   const result = unpackToolResult(await registeredTools.get("remember_household_preference").execute("configured-sqlite", {
     memory_type: "comfort_temperature_c",
     value: 21.5,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 
 import { EnergySavingAgent } from "../../energy-saving/src/energy-agent.js";
@@ -9,8 +10,52 @@ const READING = Type.Record(Type.String(), Type.Any());
 const NULLABLE_STRING = Type.Union([Type.String(), Type.Null()]);
 const NULLABLE_NON_NEGATIVE_NUMBER = Type.Union([Type.Number({ minimum: 0 }), Type.Null()]);
 const NULLABLE_POSITIVE_NUMBER = Type.Union([Type.Number({ exclusiveMinimum: 0 }), Type.Null()]);
+const TARIFF_CLOCK = Type.String({
+  pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
+  description: "24 小时制 HH:mm。午夜写 00:00，不要写 24:00。",
+});
+const TARIFF_SEGMENT = Type.Object({
+  name: Type.String({ minLength: 1, description: "用户提供的时段名称，例如 peak、off_peak 或 shoulder。" }),
+  tier: Type.Optional(Type.Union([
+    Type.Literal("peak"),
+    Type.Literal("off_peak"),
+    Type.Literal("shoulder"),
+  ], { description: "时段类型；可省略，省略时按 shoulder 处理。" })),
+  start: TARIFF_CLOCK,
+  end: TARIFF_CLOCK,
+  price_per_kwh: Type.Number({ minimum: 0, description: "该时段每千瓦时的单价。" }),
+}, { additionalProperties: false });
+const TARIFF = Type.Object({
+  currency: Type.Optional(Type.String({ minLength: 1, description: "币种代码，例如 CNY。" })),
+  segments: Type.Array(TARIFF_SEGMENT, {
+    minItems: 1,
+    maxItems: 48,
+    description: "明确提供的分时电价。每段都要包含 name、start、end、price_per_kwh；时段不可重叠。",
+  }),
+}, { additionalProperties: false });
+const ENERGY_OPTIMIZATION_PROPERTIES = {
+  readings: Type.Array(READING, { maxItems: 1000 }),
+  tariff: TARIFF,
+  flexible_loads: Type.Optional(Type.Array(Type.Object({
+    load_id: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
+    energy_kwh: Type.Number({ exclusiveMinimum: 0 }),
+    duration_minutes: Type.Integer({ minimum: 1, maximum: 1440 }),
+    earliest_start: Type.String({ minLength: 1, format: "date-time", description: "带明确时区的 ISO 8601 时间。" }),
+    deadline_at: Type.String({ minLength: 1, format: "date-time", description: "带明确时区的 ISO 8601 时间；若允许恰好在午夜结束，使用次日 00:00，而不是前一日 23:59。" }),
+    user_marked_flexible: Type.Boolean(),
+  }, { additionalProperties: false }), { maxItems: 12 })),
+  timezone: Type.Optional(Type.String()),
+  standby_threshold_w: Type.Optional(Type.Number({ minimum: 0 })),
+};
+const ENERGY_OPTIMIZATION_INPUT = Type.Object(ENERGY_OPTIMIZATION_PROPERTIES, { additionalProperties: false });
+const ENERGY_OPTIMIZATION_CALCULATOR_INPUT = Type.Object({
+  ...ENERGY_OPTIMIZATION_PROPERTIES,
+  evaluation_time_ms: Type.Number({ minimum: 0, description: "由委派适配器注入的统一评估时刻；调用方不得自行指定。" }),
+}, { additionalProperties: false });
 const MAX_COMPLETION_HISTORY_LIMIT = 50;
 const MAX_COMPLETION_HISTORY_OFFSET = 500;
+const ENERGY_STANDBY_ACTION_LIMIT = 11;
 
 function paginateCompletions(completions, { limit, offset, cursor, scheduleId }) {
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_COMPLETION_HISTORY_LIMIT
@@ -60,6 +105,12 @@ function paginateCompletions(completions, { limit, offset, cursor, scheduleId })
 
 export const ENERGY_OPERATIONS_TOOL_DEFINITIONS = Object.freeze([
   {
+    name: "plan_energy_optimization",
+    label: "plan_energy_optimization",
+    description: "委派给独立能源管家 Agent 进行低谷排程和待机能耗评估。只使用本次明确提供的电量、电价和用户标记可延后的负载；能源管家调用确定性计算工具，适配器校验结果后，设备管家才会核查任何待机关闭候选。不会读取电表、安装排程或直接控制设备。费用差额是均匀耗能假设下的估算，不是实测节省。电价必须按 tariff.segments 传入；时间使用 24 小时 HH:mm，午夜写 00:00。若用户说最晚午夜结束，deadline_at 使用次日 00:00。信息不完整或结果校验失败时说明缺项，不得猜测电价或宣称已执行。",
+    inputSchema: ENERGY_OPTIMIZATION_INPUT,
+  },
+  {
     name: "analyze_energy_usage",
     label: "analyze_energy_usage",
     description: "分析本次调用明确提供的 Mock/本地分时电量读数，返回分设备/区域/时段画像、显式基线异常候选、电价预算和建议。没有读取 HA、电表或其他外部数据，也不创建控制任务；不要把建议说成已实现节能。",
@@ -69,6 +120,22 @@ export const ENERGY_OPERATIONS_TOOL_DEFINITIONS = Object.freeze([
       tariff: Type.Optional(JSON_OBJECT),
       policy: Type.Optional(JSON_OBJECT),
       budget: Type.Optional(JSON_OBJECT),
+    }, { additionalProperties: false }),
+  },
+  {
+    name: "forecast_energy_budget",
+    label: "forecast_energy_budget",
+    description: "能源管家的只读预算进度估算。仅使用调用方明确提供的预算周期和连续逐日电量；至少 3 个完整日，并必须由用户明确说明覆盖完整。缺天、未确认完整或信息不足时不预测。按已完整日期平均日用电量做线性进度估算，不是统计模型预测；不读取 HA/电表，不创建任务、不控制设备。不得替用户编造日数据或完整性确认。",
+    inputSchema: Type.Object({
+      budget_kwh: Type.Number({ exclusiveMinimum: 0 }),
+      period_start: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "账期开始日，按家庭账单使用的本地日历日期填写。" }),
+      period_end: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "账期结束日，含当天。" }),
+      through_date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "最近一个已经完整统计结束的日期。" }),
+      daily_totals: Type.Array(Type.Object({
+        date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
+        energy_kwh: Type.Number({ minimum: 0 }),
+      }, { additionalProperties: false }), { minItems: 1, maxItems: 366 }),
+      coverage_attested_complete: Type.Literal(true, { description: "仅在用户明确说明 period_start 到 through_date 的每天电量都完整且没有漏数时传 true。" }),
     }, { additionalProperties: false }),
   },
   {
@@ -127,6 +194,14 @@ export const ENERGY_OPERATIONS_TOOL_DEFINITIONS = Object.freeze([
   },
 ]);
 
+/** Internal calculator exposed only inside the independent energy-saving Agent session. */
+export const ENERGY_OPTIMIZATION_CALCULATOR_TOOL_DEFINITION = Object.freeze({
+  name: "calculate_energy_optimization",
+  label: "calculate_energy_optimization",
+  description: "能源管家内部确定性计算工具。依据输入的电价、读数及明确标记可延后的负载生成计算结果；只返回报告，不查询或控制设备、不创建计划、不安装排程。evaluation_time_ms 由设备管家适配器注入并原样传入。",
+  inputSchema: ENERGY_OPTIMIZATION_CALCULATOR_INPUT,
+});
+
 function errorResult(error, fallbackCode) {
   return {
     success: false,
@@ -142,6 +217,8 @@ export function createEnergyOperationsTools({
   energyAgent = new EnergySavingAgent(),
   maintenanceStore = new MaintenanceScheduleStore(),
   reminderInbox,
+  deviceInventory = null,
+  agentPlanTools = null,
   clock = () => Date.now(),
 } = {}) {
   if (typeof energyAgent?.analyzeEnergyUsage !== "function"
@@ -158,12 +235,187 @@ export function createEnergyOperationsTools({
     throw new Error("提醒收件箱必须支持维护完成同步");
   }
 
+  async function buildEnergyActionApproval(candidates, optimization) {
+    if (candidates.length === 0) return { status: "NO_ACTION_CANDIDATE", execution_performed: false };
+    if (!deviceInventory || typeof deviceInventory.discover !== "function"
+      || !agentPlanTools || typeof agentPlanTools.submitAgentPlan !== "function"
+      || typeof energyAgent.planStandbyOptimizationTasks !== "function") {
+      return {
+        status: "DEVICE_MANAGER_INTEGRATION_REQUIRED",
+        execution_performed: false,
+        note: "当前部署未提供设备管家设备清单和计划入口；保留候选说明，不创建任何设备动作。",
+      };
+    }
+
+    let scan;
+    try {
+      scan = await deviceInventory.discover();
+    } catch {
+      scan = null;
+    }
+    if (scan?.success !== true || !Array.isArray(scan.devices)) {
+      return {
+        status: "DEVICE_REVALIDATION_FAILED",
+        execution_performed: false,
+        error: scan?.error ?? { code: "DEVICE_DISCOVERY_FAILED", message: "无法刷新设备清单；未创建待执行计划。" },
+      };
+    }
+
+    const eligibleCandidates = [];
+    const omitted = [];
+    const seen = new Set();
+    for (const candidate of candidates) {
+      const deviceId = candidate.control_device_id;
+      if (seen.has(deviceId)) continue;
+      seen.add(deviceId);
+      const device = scan.devices.find((item) => item.device_id === deviceId);
+      let reason = null;
+      if (!device) reason = "CONTROL_DEVICE_NOT_IN_CURRENT_INVENTORY";
+      else if (device.approval_status !== "approved") reason = "DEVICE_NOT_APPROVED";
+      else if (device.energy_opt_in !== true) reason = "ENERGY_PERMISSION_REQUIRED";
+      else if (device.area_confirmed !== true || typeof device.area_id !== "string" || !device.area_id.trim()) reason = "ROOM_NOT_CONFIRMED";
+      else if (device.domain !== "switch") reason = "CONTROL_TARGET_MUST_BE_A_SWITCH";
+      else if (device.available !== true) reason = "DEVICE_UNAVAILABLE";
+      else if (device.current_state !== "on") reason = device.current_state === "off" ? "ALREADY_OFF" : "DEVICE_STATE_UNKNOWN";
+      else if (device.current_capabilities?.actions?.turn_off?.supported !== true) reason = "TURN_OFF_CAPABILITY_NOT_CONFIRMED";
+
+      if (reason) {
+        omitted.push({
+          control_device_id: deviceId,
+          reason,
+          ...(device ? { current_state: device.current_state ?? null, available: device.available ?? null } : {}),
+        });
+        continue;
+      }
+      eligibleCandidates.push(candidate);
+      if (eligibleCandidates.length >= ENERGY_STANDBY_ACTION_LIMIT) break;
+    }
+
+    if (eligibleCandidates.length === 0) {
+      return {
+        status: "NO_ELIGIBLE_DEVICE_ACTION",
+        execution_performed: false,
+        omitted_devices: omitted,
+      };
+    }
+
+    const planId = `energy-optimization-${randomUUID()}`;
+    const energyStepId = "energy-saving-standby-plan";
+    const energyOptimizationInput = {
+      candidates: eligibleCandidates,
+      event_id: `evt-${planId}`,
+      trace_id: `trace-${planId}`,
+    };
+    const energyPlan = await energyAgent.planStandbyOptimizationTasks({ ...energyOptimizationInput, reserve: false });
+    if (energyPlan.status !== "PLANNED" || energyPlan.tasks.length === 0) {
+      return {
+        status: "ENERGY_AGENT_NO_ACTION",
+        execution_performed: false,
+        energy_agent_result: energyPlan,
+        omitted_devices: omitted,
+        note: "能源管家重新读取已授权设备状态后没有生成可执行 Task；没有提交设备动作。",
+      };
+    }
+    const planSteps = [{
+      step_id: energyStepId,
+      agent_id: "energy-saving",
+      capability: "plan_event",
+      depends_on: [],
+      input: { energy_optimization: energyOptimizationInput },
+    }, ...energyPlan.tasks.map((task, index) => ({
+      step_id: `device-action-${index + 1}`,
+      agent_id: "device-manager",
+      capability: "execute_device_action",
+      depends_on: [energyStepId],
+      input: {},
+      action: {
+        name: task.action,
+        target_ref: { device_id: task.target_ref.device_id },
+        parameters: task.parameters ?? {},
+      },
+    }))];
+    const result = await agentPlanTools.submitAgentPlan({
+      plan: {
+        schema_version: "0.1",
+        plan_id: planId,
+        trace_id: `trace-${planId}`,
+        goal: "能源管家根据明确待机读数生成候选 Task，再由设备管家核验并在用户确认后关闭智能插座",
+        steps: planSteps,
+      },
+    });
+    return {
+      status: result?.workflow_status ?? (result?.success === false ? "PLAN_REJECTED" : "PLAN_SUBMITTED"),
+      execution_performed: result?.execution_performed === true,
+      approval: result?.approval ?? null,
+      workflow_result: result,
+      omitted_devices: omitted,
+      candidate_device_ids: eligibleCandidates.map((candidate) => candidate.control_device_id),
+      energy_agent_result: energyPlan,
+      note: "设备管家会重新核查计划证据；未收到用户针对该方案的后续明确同意时，不会执行。",
+      optimization_schema: optimization.schema_version,
+    };
+  }
+
+  function calculateEnergyOptimization(params = {}) {
+    const { evaluation_time_ms: evaluationTime, ...optimizationInput } = params;
+    return energyAgent.planEnergyOptimization({
+      ...optimizationInput,
+      now: Number.isFinite(evaluationTime) ? evaluationTime : clock(),
+    });
+  }
+
+  async function completeEnergyOptimization(params, optimization) {
+    const approval = await buildEnergyActionApproval(optimization.standby_action_candidates, optimization);
+    return {
+      success: true,
+      source: optimization.source,
+      report: optimization,
+      device_action_workflow: approval,
+    };
+  }
+
   return {
+    async plan_energy_optimization(params = {}) {
+      try {
+        const optimization = calculateEnergyOptimization(params);
+        return completeEnergyOptimization(params, optimization);
+      } catch (error) {
+        return errorResult(error, "ENERGY_OPTIMIZATION_FAILED");
+      }
+    },
+
+    calculate_energy_optimization(params = {}) {
+      try {
+        return calculateEnergyOptimization(params);
+      } catch (error) {
+        return errorResult(error, "ENERGY_OPTIMIZATION_FAILED");
+      }
+    },
+
+    async complete_energy_optimization(params = {}, optimization) {
+      try {
+        if (!optimization || typeof optimization !== "object" || Array.isArray(optimization)) {
+          throw new TypeError("optimization 必须是已通过适配器校验的对象");
+        }
+        return await completeEnergyOptimization(params, optimization);
+      } catch (error) {
+        return errorResult(error, "ENERGY_OPTIMIZATION_FAILED");
+      }
+    },
+
     async analyze_energy_usage(params = {}) {
       try {
         return { success: true, source: "CALLER_SUPPLIED_DATA_ONLY", report: energyAgent.analyzeEnergyUsage(params) };
       } catch (error) {
         return errorResult(error, "ENERGY_ANALYSIS_FAILED");
+      }
+    },
+
+    async forecast_energy_budget(params = {}) {
+      try {
+        return { success: true, source: "CALLER_SUPPLIED_COMPLETE_DAILY_TOTALS", report: energyAgent.forecastEnergyBudget(params) };
+      } catch (error) {
+        return errorResult(error, "ENERGY_BUDGET_FORECAST_FAILED");
       }
     },
 

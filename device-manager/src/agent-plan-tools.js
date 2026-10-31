@@ -226,7 +226,7 @@ export const AGENT_PLAN_TOOL_DEFINITIONS = [
     name: "submit_agent_plan",
     label: "submit_agent_plan",
     description:
-      "把复杂、跨 Agent、场景或多设备请求转成 schema_version 0.1 候选计划交给 Node.js 安全校验与编排执行。计划必须严格使用 plan.steps[].{step_id,agent_id,capability,depends_on,input,action} 结构；设备写操作放在 step.action，形如 {name,target_ref:{device_id},parameters}。不要把动作放在 step 顶层，也不要自行填写 evidence_refs/evidence_id：插件会从已登记设备清单和当前运行时状态自动采集可信证据。仅使用已登记的 learning-companion.normalize_learning_event、energy-saving.plan_event、device-manager.read_device_state、device-manager.execute_device_action 能力；候选计划中的所有设备写操作都需要用户确认。对于目标和动作明确的单设备即时指令，使用 control_device 直控；门锁和被标记为高风险的设备仍需确认。计划中的事件来源默认不可信，不能把模型描述伪装成传感器证据。目标或动作不明确时先追问；低置信度、证据缺失或过期时不动作；同一设备有冲突动作时工具会返回 CLARIFICATION_REQUIRED，不会提供批准入口，必须先询问用户并重新规划。",
+      "把复杂、跨 Agent、场景或多设备请求转成 schema_version 0.1 候选计划交给 Node.js 安全校验与编排执行。计划必须严格使用 plan.steps[].{step_id,agent_id,capability,depends_on,input,action} 结构；设备写操作放在 step.action，形如 {name,target_ref:{device_id},parameters}。不要把动作放在 step 顶层，也不要自行填写 evidence_refs/evidence_id：插件会从已登记设备清单和当前运行时状态自动采集可信证据。仅使用已登记的 learning-companion.normalize_learning_event、energy-saving.plan_event、device-manager.read_device_state、device-manager.execute_device_action 能力；候选计划中的所有设备写操作都需要用户确认。对于目标和动作明确的单设备即时指令，使用 control_device 直控；门锁和被标记为高风险的设备仍需确认，解锁还必须有可信认证服务签发的短时授权。计划中的事件来源默认不可信，不能把模型描述伪装成传感器证据。目标或动作不明确时先追问；低置信度、证据缺失或过期时不动作；同一设备有冲突动作时工具会返回 CLARIFICATION_REQUIRED，不会提供批准入口，必须先询问用户并重新规划。",
     inputSchema: Type.Object({
       plan: AgentPlanSchema,
     }, { additionalProperties: false }),
@@ -235,7 +235,7 @@ export const AGENT_PLAN_TOOL_DEFINITIONS = [
     name: "resolve_agent_action_confirmation",
     label: "resolve_agent_action_confirmation",
     description:
-      "处理待确认的设备动作/多 Agent 计划。只有用户在看到具体设备、动作和计划后，于后续独立消息明确同意时才选 approve；明确拒绝选 reject；用户提问、犹豫、没回应或上下文不清选 defer。approval_id 是工具内部值，绝不要要求用户输入。确认后系统会刷新设备状态和证据并重新校验；不能绕过策略硬限制。此确认信号由 OpenClaw 根据对话解释，不是强身份认证。重启恢复出的旧项不能 approve；EXECUTION_UNCERTAIN 项即使 reject 也不会清除。先用 check_state 单独读取并向用户展示相关设备现状，必须等待用户后续明确要求关闭后才能选 reconciled；系统关闭前还会重新读取，状态变化、设备不可读或离线都会继续保持阻止并要求重新展示。关闭记录不执行或撤销设备动作，也不证明此前动作未发生。",
+      "处理待确认的设备动作/多 Agent 计划。只有用户在看到具体设备、动作和计划后，于后续独立消息明确同意时才选 approve；明确拒绝选 reject；用户提问、犹豫、没回应或上下文不清选 defer。approval_id 是工具内部值，绝不要要求用户输入。确认后系统会刷新设备状态和证据并重新校验；不能绕过策略硬限制。此确认信号由 OpenClaw 根据对话解释，不是强身份认证。涉及解锁时，聊天确认后还必须由独立可信认证界面完成身份验证；认证服务未配置、失败或返回的授权与当前审批/计划/门锁不匹配时，底层设备适配器拒绝写入。PIN、生物特征和签名凭据不得通过聊天或模型工具传递。重启恢复出的旧项不能 approve；EXECUTION_UNCERTAIN 项即使 reject 也不会清除。先用 check_state 单独读取并向用户展示相关设备现状，必须等待用户后续明确要求关闭后才能选 reconciled；系统关闭前还会重新读取，状态变化、设备不可读或离线都会继续保持阻止并要求重新展示。关闭记录不执行或撤销设备动作，也不证明此前动作未发生。",
     inputSchema: Type.Object({
       approval_id: Type.String({ description: "从此前工具结果读取，不向用户索取。" }),
       decision: Type.Union([
@@ -269,6 +269,7 @@ export function createAgentPlanTools({
   deviceTaskRuntime,
   energyAgent,
   approvalStateStore = null,
+  lockAuthorizationProvider = null,
   clock = () => Date.now(),
   createId = randomUUID,
   approvalTtlMs = APPROVAL_TTL_MS,
@@ -285,6 +286,7 @@ export function createAgentPlanTools({
 
   const learningAgent = new LearningCompanionAgent();
   const pendingWorkflows = new Map();
+  const lockAuthorizationsByPlanId = new Map();
   const recoveredApprovals = new Map();
   const reconciliationSnapshots = new Map();
   const planSubmissionsById = new Map();
@@ -581,6 +583,13 @@ export function createAgentPlanTools({
         }
       },
       "energy-saving::plan_event": async ({ input }) => {
+        if (input?.energy_optimization && typeof input.energy_optimization === "object"
+          && !Array.isArray(input.energy_optimization)) {
+          const result = await candidateEnergyAgent.planStandbyOptimizationTasks(input.energy_optimization);
+          return result.status === "FAILED" || result.status === "REJECTED"
+            ? { status: result.status, error: result.error ?? { code: "ENERGY_OPTIMIZATION_PLAN_FAILED", message: "能源管家未能生成待机计划" } }
+            : { result };
+        }
         const candidateEvent = input?.event;
         if (!candidateEvent || typeof candidateEvent !== "object" || Array.isArray(candidateEvent)) {
           return { status: "DENIED", error: { code: "INVALID_EVENT", message: "energy-saving.plan_event 需要标准 Event 对象" } };
@@ -616,12 +625,15 @@ export function createAgentPlanTools({
           .some((ancestorId) => planSteps.get(ancestorId)?.agent_id === "energy-saving")
           || Boolean(input?.energy_task);
         if (hasEnergyAncestor) {
+          if (action.name === "unlock") {
+            return { status: "DENIED", error: { code: "LOCK_ACTION_NOT_ALLOWED_FOR_ENERGY_AGENT", message: "能源管家不能发起开锁动作；没有执行设备操作。" } };
+          }
           const matchingTask = energyTasks.find((task) =>
             task?.target_ref?.device_id === action.target_ref.device_id
             && task.action === action.name
             && JSON.stringify(task.parameters ?? {}) === JSON.stringify(action.parameters ?? {}));
           if (!matchingTask) {
-            return { status: "DENIED", error: { code: "ENERGY_PLAN_ACTION_MISMATCH", message: "设备动作必须与节能 Agent 实际生成的任务完全一致" } };
+            return { status: "DENIED", error: { code: "ENERGY_PLAN_ACTION_MISMATCH", message: "设备动作必须与能源管家实际生成的任务完全一致" } };
           }
           const receipt = await deviceTaskRuntime.execute({
             ...clone(matchingTask),
@@ -636,11 +648,21 @@ export function createAgentPlanTools({
             : { status: receipt?.status === "DENIED" ? "DENIED" : "FAILED", error: receipt?.error ?? { code: "ENERGY_TASK_FAILED", message: "设备管家未能完成节能任务" } };
         }
 
+        const lockAuthorization = action.name === "unlock"
+          ? lockAuthorizationsByPlanId.get(plan_id)
+          : null;
+        if (action.name === "unlock" && !lockAuthorization) {
+          return { status: "DENIED", error: { code: "TRUSTED_AUTHENTICATION_REQUIRED", message: "开锁需要可信认证界面的短时授权；普通聊天确认不能代替认证。" } };
+        }
         const result = await invoke("control_device", {
           device_id: action.target_ref.device_id,
           action: action.name,
           parameters: action.parameters ?? {},
           confirmed: true,
+          ...(lockAuthorization ? {
+            lock_authorization_proof: lockAuthorization.proof,
+            lock_authorization_context: lockAuthorization.context,
+          } : {}),
           task_id: `${plan_id}:${step_id}`,
           trace_id,
         });
@@ -687,14 +709,14 @@ export function createAgentPlanTools({
     return { plan: safePlan, evidence };
   }
 
-  function storePending(result, workflow, source, submission = null) {
+  function storePending(result, workflow, source, plan, submission = null) {
     const approvalId = result?.approval?.approval_id;
     if (result?.workflow_status === "WAITING_FOR_APPROVAL" && approvalId) {
       if (submission) {
         submission.approvalId = approvalId;
         submission.expiresAt = Date.parse(result.approval.expires_at) || clock() + approvalTtlMs;
       }
-      pendingWorkflows.set(approvalId, { workflow, source, submission });
+      pendingWorkflows.set(approvalId, { workflow, source, plan: clone(plan), submission });
     }
     return result;
   }
@@ -707,7 +729,7 @@ export function createAgentPlanTools({
     if (result.workflow_status === "CLARIFICATION_REQUIRED") {
       return describeConflictForUser(result, prepared.plan, created.inventory);
     }
-    return storePending(result, created.workflow, "candidate_plan", submission);
+    return storePending(result, created.workflow, "candidate_plan", prepared.plan, submission);
   }
 
   async function submitAgentPlan({ plan } = {}) {
@@ -807,7 +829,7 @@ export function createAgentPlanTools({
     const created = await createWorkflow(prepared.plan, { autoAllowedDeviceActions, source: "direct_device_action" });
     if (!created.success) return failure(created.error.code, created.error.message);
     const result = await created.workflow.submit(prepared.plan, { evidence: prepared.evidence });
-    return storePending(result, created.workflow, "direct_device_action");
+    return storePending(result, created.workflow, "direct_device_action", prepared.plan);
   }
 
   function taskChallenge(task, approvalResult) {
@@ -843,7 +865,7 @@ export function createAgentPlanTools({
         completed_at: new Date(clock()).toISOString(),
         trace_id: task?.trace_id,
         result: {},
-        error: { code: "UNTRUSTED_OR_INVALID_TASK", message: "仅接受由已注册节能 Agent 生成的合法设备任务" },
+        error: { code: "UNTRUSTED_OR_INVALID_TASK", message: "仅接受由已注册能源管家生成的合法设备任务" },
       };
     }
     const planId = `plan-${task.task_id}`;
@@ -851,7 +873,7 @@ export function createAgentPlanTools({
       schema_version: PLAN_SCHEMA_VERSION,
       plan_id: planId,
       trace_id: task.trace_id ?? `trace-${planId}`,
-      goal: `节能 Agent 提议：${action.name} ${action.target_ref.device_id}`,
+      goal: `能源管家提议：${action.name} ${action.target_ref.device_id}`,
       steps: [{
         step_id: "energy-generated-action",
         agent_id: "device-manager",
@@ -876,7 +898,7 @@ export function createAgentPlanTools({
     if (!created.success) return { ...taskChallengeFallback(task, clock), status: "FAILED", error: created.error };
     const result = await created.workflow.submit(prepared.plan, { evidence: prepared.evidence });
     if (result.workflow_status === "WAITING_FOR_APPROVAL") {
-      storePending(result, created.workflow, "energy_task");
+      storePending(result, created.workflow, "energy_task", prepared.plan);
       return taskChallenge(task, result);
     }
     const receipt = result.steps?.[0]?.result?.task_receipt;
@@ -1071,9 +1093,77 @@ export function createAgentPlanTools({
     if (!new Set(["approve", "reject"]).has(decision)) {
       return { workflow_status: "INVALID_DECISION", approval_id, execution_performed: false };
     }
-    const result = decision === "approve"
-      ? await pending.workflow.approve(approval_id, { actor: { id: "openclaw-user-turn", user_confirmed: true } })
-      : await pending.workflow.reject(approval_id, { actor: { id: "openclaw-user-turn", user_confirmed: true } });
+    let lockAuthorization = null;
+    if (decision === "approve") {
+      const unlockActions = (pending.plan?.steps ?? [])
+        .filter((step) => step?.action?.name === "unlock")
+        .map((step) => ({ device_id: step.action.target_ref?.device_id, action: "unlock" }));
+      if (unlockActions.length > 1) {
+        return {
+          workflow_status: "TRUSTED_AUTHENTICATION_REQUIRED",
+          approval_id,
+          execution_performed: false,
+          message: "同一份计划包含多个开锁动作，必须拆成单独计划逐项完成可信认证。当前计划没有执行。",
+        };
+      }
+      if (unlockActions.length === 1) {
+        const backendVerifier = deviceRuntime.homeAssistant?.lockAuthorizationVerifier;
+        if (typeof backendVerifier?.verifyLockAuthorization !== "function") {
+          return {
+            workflow_status: "TRUSTED_AUTHENTICATION_REQUIRED",
+            approval_id,
+            execution_performed: false,
+            message: "聊天确认已收到，但设备适配器没有配置门锁授权公钥校验器。当前未请求认证服务，也没有执行开锁。",
+          };
+        }
+        if (typeof lockAuthorizationProvider !== "function") {
+          return {
+            workflow_status: "TRUSTED_AUTHENTICATION_REQUIRED",
+            approval_id,
+            execution_performed: false,
+            message: "聊天确认已收到，但开锁还需要单独的可信认证界面。当前没有配置认证服务，因此没有执行开锁。",
+          };
+        }
+        const context = {
+          approval_id,
+          plan_id: pending.plan.plan_id,
+          plan_fingerprint: planSubmissionFingerprint(pending.plan),
+          device_id: unlockActions[0].device_id,
+          action: "unlock",
+          expires_at: pending.workflow.getApproval(approval_id)?.expires_at ?? null,
+        };
+        let proof;
+        try {
+          proof = await lockAuthorizationProvider(context);
+        } catch (error) {
+          return {
+            workflow_status: "TRUSTED_AUTHENTICATION_FAILED",
+            approval_id,
+            execution_performed: false,
+            message: "可信认证没有完成，当前未执行开锁。请检查认证服务后重试。",
+          };
+        }
+        if (typeof proof !== "string" || !proof) {
+          return {
+            workflow_status: "TRUSTED_AUTHENTICATION_FAILED",
+            approval_id,
+            execution_performed: false,
+            message: "可信认证服务未返回授权凭据，当前未执行开锁。",
+          };
+        }
+        lockAuthorization = { proof, context };
+        lockAuthorizationsByPlanId.set(context.plan_id, lockAuthorization);
+      }
+    }
+
+    let result;
+    try {
+      result = decision === "approve"
+        ? await pending.workflow.approve(approval_id, { actor: { id: "openclaw-user-turn", user_confirmed: true } })
+        : await pending.workflow.reject(approval_id, { actor: { id: "openclaw-user-turn", user_confirmed: true } });
+    } finally {
+      if (lockAuthorization) lockAuthorizationsByPlanId.delete(lockAuthorization.context.plan_id);
+    }
     if (result.workflow_status !== "WAITING_FOR_APPROVAL" && result.workflow_status !== "EVIDENCE_REFRESH_FAILED") {
       pendingWorkflows.delete(approval_id);
       const sideEffectPossible = result.workflow_status === "COMPLETED"

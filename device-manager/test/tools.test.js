@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { Check } from "typebox/value";
 
 import { MockHomeAssistant } from "../src/mock-ha.js";
 import { HOUSEHOLD_MEMORY_TOOL_DEFINITIONS } from "../src/memory-tools.js";
@@ -14,7 +15,10 @@ import { DEVICE_INVENTORY_TOOL_DEFINITIONS } from "../src/device-inventory-tools
 import { ADAPTIVE_ENERGY_SCENE_TOOL_DEFINITIONS } from "../src/adaptive-energy-scene-tools.js";
 import { DEVICE_MONITOR_TOOL_DEFINITIONS } from "../src/device-monitor-tools.js";
 import { ROUTINE_NOTIFICATION_TOOL_DEFINITIONS } from "../src/routine-notification-tools.js";
-import { ENERGY_OPERATIONS_TOOL_DEFINITIONS } from "../src/energy-operations-tools.js";
+import {
+  ENERGY_OPERATIONS_TOOL_DEFINITIONS,
+  ENERGY_OPTIMIZATION_CALCULATOR_TOOL_DEFINITION,
+} from "../src/energy-operations-tools.js";
 import { MAINTENANCE_REMINDER_TOOL_DEFINITIONS } from "../src/maintenance-reminder-tools.js";
 import { createDeviceToolRuntime, DEVICE_TOOL_DEFINITIONS } from "../src/tools.js";
 
@@ -43,6 +47,7 @@ test("OpenClaw manifest 声明设备工具和调度工具", () => {
     ...DEVICE_MONITOR_TOOL_DEFINITIONS,
     ...DEVICE_INVENTORY_TOOL_DEFINITIONS,
     ...ENERGY_OPERATIONS_TOOL_DEFINITIONS,
+    ENERGY_OPTIMIZATION_CALCULATOR_TOOL_DEFINITION,
     ...MAINTENANCE_REMINDER_TOOL_DEFINITIONS,
   ].map((tool) => tool.name).concat("talk_to_device_manager", "call_independent_agent", "evaluate_energy_event_with_independent_agent"));
 });
@@ -161,7 +166,7 @@ test("未确认时禁止门锁锁定或解锁且状态不变", () => {
   }
 });
 
-test("明确确认后允许门锁锁定或解锁", () => {
+test("聊天确认可以上锁，但不能代替解锁所需的可信认证", () => {
   const lockRuntime = createDeviceToolRuntime();
   const locking = lockRuntime.invoke("control_device", {
     device_id: "lock.front_door",
@@ -177,8 +182,21 @@ test("明确确认后允许门锁锁定或解锁", () => {
     confirmed: true,
   });
 
-  assert.equal(result.success, true);
-  assert.equal(result.new_state, "unlocked");
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "TRUSTED_AUTHENTICATION_REQUIRED");
+  assert.equal(runtime.invoke("get_state", { device_id: "lock.front_door" }).device.state, "locked");
+});
+
+test("OpenClaw control_device schema 不接受 PIN、签名凭据或授权上下文", () => {
+  const schema = DEVICE_TOOL_DEFINITIONS.find(({ name }) => name === "control_device").inputSchema;
+  const base = { device_id: "lock.front_door", action: "unlock" };
+  for (const extra of [
+    { pin: "123456" },
+    { lock_authorization_proof: "signed-assertion" },
+    { lock_authorization_context: { approval_id: "approval-1" } },
+  ]) {
+    assert.equal(Check(schema, { ...base, ...extra }), false);
+  }
 });
 
 test("Mock HA 对被标记为高风险的非门锁设备也要求确认", () => {

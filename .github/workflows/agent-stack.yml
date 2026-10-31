@@ -27,8 +27,20 @@ jobs:
         run: npm install --no-save --package-lock=false --omit=peer --legacy-peer-deps --ignore-scripts
         working-directory: device-manager
 
+      - name: Install target OpenClaw SDK for adapter tests
+        run: npm install --no-save --package-lock=false --include=peer --ignore-scripts openclaw@2026.7.1-2
+        working-directory: device-manager
+
       - name: Install orchestrator direct dependencies for Mock tests
         run: npm install --no-save --package-lock=false --omit=peer --legacy-peer-deps --ignore-scripts
+        working-directory: multi-agent-orchestrator
+
+      - name: Validate device-manager OpenClaw plugin
+        run: node_modules/.bin/openclaw plugins validate --root . --entry ./src/openclaw-plugin.js
+        working-directory: device-manager
+
+      - name: Validate platform-orchestrator OpenClaw plugin
+        run: ../device-manager/node_modules/.bin/openclaw plugins validate --root . --entry ./src/openclaw-platform-plugin.js
         working-directory: multi-agent-orchestrator
 
       - name: Run Linux local and Mock verification suite

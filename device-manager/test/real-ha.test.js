@@ -275,6 +275,81 @@ test("真实 HA 门锁锁定和解锁都要求明确确认且不会调用服务"
   assert.equal(postCount, 0);
 });
 
+test("真实 HA 的 confirmed=true 不能绕过解锁强认证门禁", async () => {
+  let postCount = 0;
+  const client = new RealHomeAssistant({
+    baseUrl: "http://ha.local:8123",
+    token: "test-token",
+    fetchImpl: async (url, options) => {
+      if (options.method === "POST") postCount += 1;
+      if (new URL(url).pathname === "/api/states/lock.front_door") {
+        return jsonResponse(entity("lock.front_door", "locked", { friendly_name: "入户门锁" }));
+      }
+      return jsonResponse([]);
+    },
+  });
+
+  const result = await client.controlDevice({
+    device_id: "lock.front_door",
+    action: "unlock",
+    confirmed: true,
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error.code, "TRUSTED_AUTHENTICATION_REQUIRED");
+  assert.equal(postCount, 0);
+});
+
+test("真实 HA 只有收到与审批上下文匹配的可信授权后才发送 unlock 服务", async () => {
+  let state = "locked";
+  let postCount = 0;
+  const expectedContext = {
+    approval_id: "approval-real-1",
+    plan_id: "plan-real-1",
+    plan_fingerprint: "b".repeat(64),
+    device_id: "lock.front_door",
+    action: "unlock",
+  };
+  const client = new RealHomeAssistant({
+    baseUrl: "http://ha.local:8123",
+    token: "test-token",
+    lockAuthorizationVerifier: {
+      verifyLockAuthorization({ proof, expected }) {
+        return proof === "valid-internal-proof" && JSON.stringify(expected) === JSON.stringify(expectedContext)
+          ? { success: true, subject: "test-user" }
+          : { success: false, error: { code: "LOCK_AUTHORIZATION_SCOPE_MISMATCH", message: "scope mismatch" } };
+      },
+    },
+    fetchImpl: async (url, options) => {
+      const path = new URL(url).pathname;
+      if (options.method === "POST") {
+        postCount += 1;
+        state = "unlocked";
+        return jsonResponse({});
+      }
+      if (path === "/api/states/lock.front_door") {
+        return jsonResponse(entity("lock.front_door", state, { friendly_name: "入户门锁" }));
+      }
+      return jsonResponse([]);
+    },
+  });
+
+  const result = await client.controlDevice({
+    ...expectedContext,
+    device_id: "lock.front_door",
+    parameters: {},
+    confirmed: true,
+    lock_authorization_proof: "valid-internal-proof",
+    lock_authorization_context: expectedContext,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.verified, true);
+  assert.equal(postCount, 1);
+  assert.equal(result.new_state, "unlocked");
+  assert.equal(JSON.stringify(client.getAuditLog()).includes("valid-internal-proof"), false);
+});
+
 test("真实 HA 对配置清单中的高风险设备控制前要求确认", async () => {
   let postCount = 0;
   const client = new RealHomeAssistant({

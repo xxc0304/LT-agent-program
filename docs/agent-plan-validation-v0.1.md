@@ -4,7 +4,7 @@
 
 `multi-agent-orchestrator/src/plan-validator.js` 提供确定性校验层，用于检查 OpenClaw/LLM 或其他规划器提出的候选 Agent 计划；`src/plan-executor.js` 只在校验结果为 `ALLOW` 时，按依赖顺序调用本地显式注册的能力处理器。
 
-本地 OpenClaw 插件现已接入候选计划工具、节能 Agent、学习伴学事件归一化能力、设备 Task runtime 和 HA/Mock 设备运行时。活动工作流对象仍在进程内；精简的确认/幂等摘要持久化在 OpenClaw state 下的 `device-manager/agent-approval-state.json`。服务重启后，尚未批准的旧项转为 `RECOVERY_REQUIRED`，必须刷新状态并重新规划；如果进程在设备执行窗口中断，则转为 `EXECUTION_UNCERTAIN`，禁止自动重放。确认由 OpenClaw 根据后续自然语言回复选择，并不是强身份认证。当前开发验证使用 Mock HA，项目提供真实 HA REST 适配器，但本机是否已配置真实 HA 需单独检查。尚未接入真实 HA 事件推送/认证适配器。`ALLOW` 只表示计划通过本模块的结构和策略检查；不代表外部数据真实、真实设备已获授权，或设备动作已成功。
+本地 OpenClaw 插件现已接入候选计划工具、能源管家、学习伴学事件归一化能力、设备 Task runtime 和 HA/Mock 设备运行时。活动工作流对象仍在进程内；精简的确认/幂等摘要持久化在 OpenClaw state 下的 `device-manager/agent-approval-state.json`。服务重启后，尚未批准的旧项转为 `RECOVERY_REQUIRED`，必须刷新状态并重新规划；如果进程在设备执行窗口中断，则转为 `EXECUTION_UNCERTAIN`，禁止自动重放。确认由 OpenClaw 根据后续自然语言回复选择，并不是强身份认证。当前开发验证使用 Mock HA，项目提供真实 HA REST 适配器，但本机是否已配置真实 HA 需单独检查。尚未接入真实 HA 事件推送/认证适配器。`ALLOW` 只表示计划通过本模块的结构和策略检查；不代表外部数据真实、真实设备已获授权，或设备动作已成功。
 
 ## 计划格式
 

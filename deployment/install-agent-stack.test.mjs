@@ -234,6 +234,16 @@ test("confirmed apply backs up first, dry-runs every config write, then applies 
     assert.ok(configSetCalls.every(({ args }) => args.includes("--strict-json")));
     assert.ok(configSetCalls.some(({ args }) => args[2] === "agents.list[0].tools.alsoAllow"));
     assert.ok(configSetCalls.some(({ args }) => args[2] === "agents.list[1].tools.alsoAllow"));
+    const energyAllowlistDryRun = configSetCalls.find(({ args }) =>
+      args[2] === "agents.list[2].tools.alsoAllow" && args.includes("--dry-run"));
+    assert.ok(energyAllowlistDryRun, "energy-saving receives a validated minimal tool allowlist");
+    assert.deepEqual(JSON.parse(energyAllowlistDryRun.args[3]), [
+      "plan_energy_optimization",
+      "calculate_energy_optimization",
+      "forecast_energy_budget",
+      "analyze_energy_usage",
+      "evaluate_energy_effect",
+    ]);
     assert.ok(plan.configWrites.includes("tools.agentToAgent.allow"));
     assert.equal(plan.safety.profileMutations, true);
     assert.equal(backupExistsAtFirstMutation, true);
@@ -267,7 +277,7 @@ test("SQLite path must be absolute and outside the package", async () => {
   });
 });
 
-test("safe Gateway restart is opt-in and Mock verification clears HA credentials", async () => {
+test("safe Gateway restart is opt-in and Mock verification clears HA and lock-auth credentials", async () => {
   await withProfile(async ({ configPath }) => {
     const calls = [];
     const baseRunner = fakeApplyRunner(configPath, calls);
@@ -294,13 +304,30 @@ test("safe Gateway restart is opt-in and Mock verification clears HA credentials
       apply: true,
       confirmInstall: async () => "INSTALL",
       confirmGatewayRestart: async () => "RESTART",
-      env: { HA_URL: "http://mock.invalid", HA_TOKEN: "test-only-secret", DEVICE_MANAGER_BACKEND: "real" },
+      env: {
+        HA_URL: "http://mock.invalid",
+        HA_TOKEN: "test-only-secret",
+        DEVICE_MANAGER_BACKEND: "real",
+        DEVICE_MANAGER_LOCK_AUTH_URL: "https://auth.invalid/authorize",
+        DEVICE_MANAGER_LOCK_AUTH_PUBLIC_KEY: "test-only-public-key",
+        DEVICE_MANAGER_LOCK_AUTH_ISSUER: "test-only-issuer",
+        DEVICE_MANAGER_LOCK_AUTH_AUDIENCE: "test-only-audience",
+      },
       now: () => new Date("2026-10-23T12:34:56.789Z"),
     });
     assert.equal(plan.gatewayRestart, "restarted-and-loaded");
     assert.equal(plan.mockVerification, "passed");
     assert.equal(mockEnv.DEVICE_MANAGER_BACKEND, "mock");
-    for (const name of ["HA_URL", "HA_TOKEN", "HA_ENTITY_ALLOWLIST", "HA_CONFIRMATION_REQUIRED_ENTITIES"]) assert.equal(Object.hasOwn(mockEnv, name), false);
+    for (const name of [
+      "HA_URL",
+      "HA_TOKEN",
+      "HA_ENTITY_ALLOWLIST",
+      "HA_CONFIRMATION_REQUIRED_ENTITIES",
+      "DEVICE_MANAGER_LOCK_AUTH_URL",
+      "DEVICE_MANAGER_LOCK_AUTH_PUBLIC_KEY",
+      "DEVICE_MANAGER_LOCK_AUTH_ISSUER",
+      "DEVICE_MANAGER_LOCK_AUTH_AUDIENCE",
+    ]) assert.equal(Object.hasOwn(mockEnv, name), false);
     assert.ok(calls.some(({ args }) => args.join(" ") === "gateway restart --safe"));
   });
 });

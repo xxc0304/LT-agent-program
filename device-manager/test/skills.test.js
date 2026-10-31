@@ -20,6 +20,8 @@ const skills = [
       "confirmed: true",
       "get_state",
       "unlock",
+      "可信认证界面",
+      "不得索取或传递 PIN",
       "不得自行拼成实体 ID",
       "澄清用户是指物理开门、解锁门锁还是其他动作",
       "自动化请求不是当前控制指令",

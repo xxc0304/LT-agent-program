@@ -9,7 +9,7 @@ learning-companion 学习伴学 Agent
         ↓ learning_behavior Event
 multi-agent-orchestrator
         ↓ 调用 energy-saving
-energy-saving 节能 Agent
+energy-saving 能源管家
         ↓ device_action Task
 device-manager 设备管家 Agent
         ↓
@@ -18,12 +18,12 @@ Mock Home Assistant
 
 ## 组件
 
-- `src/learning-agent.js`：把单行为结果或试验性的课堂场景结果转换为 `learning_behavior` Event；节能 Agent 只采用先前实际路由到自身的可信 HA 无人事件作独立佐证，不读取模型在 payload 中自报的传感器证明；
+- `src/learning-agent.js`：把单行为结果或试验性的课堂场景结果转换为 `learning_behavior` Event；能源管家只采用先前实际路由到自身的可信 HA 无人事件作独立佐证，不读取模型在 payload 中自报的传感器证明；
 - 单张图片固定标记为 `needs_review: true`、`duration_ms: 0`；多帧接口只根据输入帧的真实时间戳计算跨度，默认至少 6 帧、跨度不少于 10 分钟、相邻帧间隔不超过 2 分钟，且 80% 高置信度在位结果一致，才确认稳定在位状态；
 - `src/scheduler.js`：注册 Agent、按事件路由、按优先级/截止时间排序、处理幂等、重试和 trace；
 - `src/openclaw-agent-client.js`：独立 OpenClaw Agent 的调用边界；严格解析并校验 Event/Task JSON、来源/目标 Agent 和 trace，处理超时、敏感字段与幂等键；
 - `src/openclaw-gateway-transport.js`：适配 OpenClaw 2026.7.1-2 插件公开的 `runtime.subagent.run` / `waitForRun` / `getSessionMessages` 链路；固定子 Agent 白名单，调用前执行 A2A 与会话可见性校验，超时后不自动重发；
-- `../device-manager/src/independent-learning-energy-workflow.js`：将结构化学习观测依次交给独立学习伴学/节能 Agent；以本地认证回调、事件一致性、时效、置信度、目标范围和复核状态作为代码门禁；
+- `../device-manager/src/independent-learning-energy-workflow.js`：将结构化学习观测依次交给独立学习伴学/能源管家；以本地认证回调、事件一致性、时效、置信度、目标范围和复核状态作为代码门禁；
 - `../docs/agent-trigger-and-memory-policy.md`：事件来源/Agent 触发矩阵和家庭记忆边界；
 - `../agent-memory/`：家庭偏好本地存储服务，由设备管家 OpenClaw 插件提供读写工具；
 - `src/demo.js`：完整 Mock 演示；
@@ -41,11 +41,11 @@ npm run demo:scene-review
 npm run replay:scene-pilot
 ```
 
-演示会模拟学习伴学 Agent 输出“孩子高置信度站立且已离开书桌 10 分钟”，然后由调度器调用节能 Agent 生成关灯任务，最后交给设备管家 Agent 执行并回读状态。
+演示会模拟学习伴学 Agent 输出“孩子高置信度站立且已离开书桌 10 分钟”，然后由调度器调用能源管家生成关灯任务，最后交给设备管家 Agent 执行并回读状态。
 
-`npm run demo:scene-review` 则模拟一份课堂场景视觉结果，展示它如何进入学习伴学 Event、被节能 Agent 接收后忽略，最终不派发设备任务且 Mock 灯保持开启。该演示使用桩结果，不需要图片、API Key 或真实 Home Assistant，也不证明视觉模型本身的识别能力。
+`npm run demo:scene-review` 则模拟一份课堂场景视觉结果，展示它如何进入学习伴学 Event、被能源管家接收后忽略，最终不派发设备任务且 Mock 灯保持开启。该演示使用桩结果，不需要图片、API Key 或真实 Home Assistant，也不证明视觉模型本身的识别能力。
 
-`npm run replay:scene-pilot` 会读取本机已有的 5 条获批模型预测（默认路径为 `learning-behavior/data/scb/results/scene-pilot-2026-09-27-predictions-approved.jsonl`），经当前 Event 适配器和调度器离线回放；没有该本地文件时可用 `--predictions <JSONL路径>` 指定。它应报告 5/5 进入复核、5/5 节能 Agent 不动作、0 个设备任务，且 Mock 灯保持开启。需要保存结果时可运行：
+`npm run replay:scene-pilot` 会读取本机已有的 5 条获批模型预测（默认路径为 `learning-behavior/data/scb/results/scene-pilot-2026-09-27-predictions-approved.jsonl`），经当前 Event 适配器和调度器离线回放；没有该本地文件时可用 `--predictions <JSONL路径>` 指定。它应报告 5/5 进入复核、5/5 能源管家不动作、0 个设备任务，且 Mock 灯保持开启。需要保存结果时可运行：
 
 ```powershell
 npm run replay:scene-pilot -- --out ..\learning-behavior\data\scb\results\scene-pilot-agent-replay-2026-09-27.json
@@ -59,9 +59,9 @@ npm run replay:scene-pilot -- --out ..\learning-behavior\data\scb\results\scene-
 
 设备管家插件提供 `call_independent_agent`：由 OpenClaw 7.1 ToolPluginFactory 注入可信的 `agentId`、`sessionKey` 和活动配置；工具仅在 `device-manager` 会话注册，目标限 `learning-companion` / `energy-saving`。传输先用 OpenClaw 公共策略检查 A2A 白名单和会话可见性，再通过插件公开的 `runtime.subagent.run` 启动、`waitForRun` 等待、`getSessionMessages` 读取本轮新回复。普通本地插件不能调用受限的 `runtime.gateway.request`（该接口仅供内置/受信任官方插件）；因此不得通过把项目插件伪装成官方插件来绕过权限边界。
 
-客户端只允许学习伴学 Agent 返回 Event、或节能 Agent 返回 Task/严格的 `NO_ACTION` 结果；回复必须是严格 JSON，并通过公共契约 schema、来源/目标 Agent 和相同 `trace_id` 校验。输入拒绝认证信息及原始图片/视频字段；幂等键传递给运行时；发起 run 后的超时/错误不会自动重试。通用 `call_independent_agent` 只返回候选结果；另有 `evaluate_energy_event_with_independent_agent` 会把标准 Event 交给独立节能 Agent：`NO_ACTION` 正常结束、不创建计划；Task 则送入设备管家 `executeEnergyTask`，由其重读设备清单和状态、建立计划并走原有确认/执行/回读流程。对话工具输入不是已认证传感器事件，因此 Task 不获得可信事件自动执行资格。此接入使用设备管家计划策略工作流，不代表它已进入 `MultiAgentScheduler` 的内存事件队列。
+客户端只允许学习伴学 Agent 返回 Event、或能源管家返回 Task/严格的 `NO_ACTION` 结果；回复必须是严格 JSON，并通过公共契约 schema、来源/目标 Agent 和相同 `trace_id` 校验。输入拒绝认证信息及原始图片/视频字段；幂等键传递给运行时；发起 run 后的超时/错误不会自动重试。通用 `call_independent_agent` 只返回候选结果；另有 `evaluate_energy_event_with_independent_agent` 会把标准 Event 交给独立能源管家：`NO_ACTION` 正常结束、不创建计划；Task 则送入设备管家 `executeEnergyTask`，由其重读设备清单和状态、建立计划并走原有确认/执行/回读流程。对话工具输入不是已认证传感器事件，因此 Task 不获得可信事件自动执行资格。此接入使用设备管家计划策略工作流，不代表它已进入 `MultiAgentScheduler` 的内存事件队列。
 
-**2026-10-15 状态更新：**独立节能 Agent 调用链已在隔离 OpenClaw `2026.7.1-2` profile 上完成一次 DeepSeek V4 Flash 合成联调，返回 `NO_ACTION / OCCUPANCY_NOT_CONFIRMED`，没有创建设备计划或执行设备动作。此前“仅 fake Gateway、未触发真实 Agent”的描述属于较早阶段记录，已由本仓库 `docs/openclaw-independent-agent-orchestration-v0.1.md` 的 2026-10-15 根因修复与复验记录取代。真实 HA、传感器和家电仍未联调。
+**2026-10-15 状态更新：**独立能源管家调用链已在隔离 OpenClaw `2026.7.1-2` profile 上完成一次 DeepSeek V4 Flash 合成联调，返回 `NO_ACTION / OCCUPANCY_NOT_CONFIRMED`，没有创建设备计划或执行设备动作。此前“仅 fake Gateway、未触发真实 Agent”的描述属于较早阶段记录，已由本仓库 `docs/openclaw-independent-agent-orchestration-v0.1.md` 的 2026-10-15 根因修复与复验记录取代。真实 HA、传感器和家电仍未联调。
 
 学习伴学→节能的独立 Agent 组合工作流已补上 Node.js 层的结构化观测认证入口、Event 一致性校验、置信度/复核/课堂范围/持续时间/时效门禁与跨 Agent trace/幂等。它目前尚未注册成对话工具：本机还没有能向该入口提供“由受信任视觉/传感器适配器认证”的真实结构化观测源，聊天文字和工具参数不能自行获得此认证。相关本地测试不调用模型、不连接 HA。
 
@@ -93,15 +93,15 @@ const sequenceEvent = await learningAgent.analyzeSequence([
 
 图片只在视觉客户端请求阶段使用，不会写入跨 Agent Event。行为标签和在位状态分开判断：`standing` 本身不会触发关灯；稳定多帧视觉离位、此前 60 秒内实际收到的同区域 HA 无人事件、时长与置信度门槛几项同时成立后，才会进入节能规则。来源未列入白名单、区域不匹配或传感器事件过期时失败关闭；伪造学习事件 payload 不能自带佐证。白名单必须由受信任运行时配置；真实系统还要认证事件来源，单凭 Event 中的字符串不能证明身份。该佐证只缓存在当前 Agent 进程，重启后清空。
 
-因此，独立 `occupancy_changed` 事件必须先被同一个调度器/节能 Agent 实例处理，再送入学习事件；进程默认没有可信来源白名单时只会观察、不执行学习触发的动作。`npm run demo` 使用的是明确配置白名单和 Mock HA 事件的本地演示，不代表真实传感器已接入。
+因此，独立 `occupancy_changed` 事件必须先被同一个调度器/能源管家实例处理，再送入学习事件；进程默认没有可信来源白名单时只会观察、不执行学习触发的动作。`npm run demo` 使用的是明确配置白名单和 Mock HA 事件的本地演示，不代表真实传感器已接入。
 
 ### 课堂场景结果如何进入 Agent
 
 `LearningCompanionAgent.analyzeSceneImage()` 是给当前 SCB 课堂场景试验用的适配入口：它用 `learning-behavior/src/scene-vision.js` 的提示词识别 `activity[]`、`posture`、`orientation`，再形成带 `annotation_scope: "classroom_scene"` 的 Event。它明确不是目标儿童识别：`target_child_specified: false`、`presence: "unknown"`、`duration_ms: 0`、`needs_review: true`；原始图片路径不会进入 Event。格式缺字段或标签无效时会保守映射为 `unknown` 并附复核原因。
 
-节能 Agent 有额外的范围保护：课堂整体 Event 不作为儿童离位信号，不生成设备任务，即便事件其他字段意外带有 `away_from_desk` 或较长持续时间。当前只是本地探索适配，不代表跨组公共契约已经定稿。
+能源管家有额外的范围保护：课堂整体 Event 不作为儿童离位信号，不生成设备任务，即便事件其他字段意外带有 `away_from_desk` 或较长持续时间。当前只是本地探索适配，不代表跨组公共契约已经定稿。
 
-运行 `npm test` 可在本地用模拟视觉结果验证“场景识别结果 → Event → 调度器 → 节能 Agent 明确不动作”；这些测试不发送图片、不调用 DeepSeek，也不会操作真实设备。
+运行 `npm test` 可在本地用模拟视觉结果验证“场景识别结果 → Event → 调度器 → 能源管家明确不动作”；这些测试不发送图片、不调用 DeepSeek，也不会操作真实设备。
 
 也可以使用真实视觉接口跑一张图片（只需在当前 PowerShell 临时设置 Key，不要写入文件）：
 
@@ -133,7 +133,7 @@ node src/run-image.js "..\learning-behavior\data\scb\images\reading\示例.jpg" 
 
 上面的时间仅为格式示例，运行前必须替换成这批图像实际采集时间，并确保末帧是在最近 5 分钟内采集的。默认需要至少 6 帧、相邻帧间隔不超过 2 分钟、总跨度不少于 10 分钟。然后运行 `node src/run-sequence.js <清单路径>`。该脚本逐帧调用视觉模型，按真实时间戳计算观察跨度；只有满足样本数、时间跨度、最大帧间隔和一致性阈值时，才可能产生节能任务。每一帧都会发送到配置的 DeepSeek 视觉接口并产生一次 API 请求；只使用许可和隐私审批允许外发的图片，勿上传可识别的私人儿童画面。设备执行仍只发生在 Mock HA。不要为测试伪造时间戳或把儿童图片提交到仓库。
 
-节能 Agent 另会拒绝超过 5 分钟的旧事件和超出 1 分钟时钟偏差的未来事件；`occurred_at` 表示事件确认/产生时刻，行为持续时间应单独由多帧时间戳计算。
+能源管家另会拒绝超过 5 分钟的旧事件和超出 1 分钟时钟偏差的未来事件；`occurred_at` 表示事件确认/产生时刻，行为持续时间应单独由多帧时间戳计算。
 
 ## 调度规则
 
@@ -145,7 +145,7 @@ node src/run-image.js "..\learning-behavior\data\scb\images\reading\示例.jpg" 
 6. `handlerTimeoutMs` 和 `taskTimeoutMs` 可单独配置。超时无法取消正在运行的 Agent 代码，所以 trace 会记录 `side_effects_unknown: true`，这不是设备动作回滚保证；
 7. 目标 Agent 不可用时返回失败回执；
 8. 每次事件、Agent 调用、任务入队、任务派发、重试和任务完成都写入同一个 `trace_id`；
-9. 学习伴学 Agent 只产生事件，节能 Agent 只生成任务，设备管家 Agent 才能执行设备动作。
+9. 学习伴学 Agent 只产生事件，能源管家只生成任务，设备管家 Agent 才能执行设备动作。
 10. 同一设备、同一互斥动作组的待执行任务会进行冲突仲裁：优先级更高的任务胜出并使较低优先级任务以 `TASK_SUPERSEDED_BY_HIGHER_PRIORITY` 结束；同优先级互斥任务全部拒绝执行并记录 `TASK_CONFLICT`。默认冲突组覆盖电源、门锁、位置、温度、亮度、色温、HVAC 模式和风速；其他动作可通过 Task `metadata.conflict_group` 声明共享冲突组，未声明时仅相同动作名互相冲突；
 
 第一版使用确定性规则和 Mock 执行节点，后续可替换为消息队列、真实 ResourceStatus 和其他小组的 Agent，不改变事件和任务边界。
@@ -184,7 +184,7 @@ OpenClaw 主对话模型
 
 - `src/platform-agent-registry.js` 登记 Agent 及其能力；未登记 ID 或能力不能调用。新增只读/规划 Agent 可通过插件 `additionalAgents` 配置登记。只有 `device-manager` 可声明 `device_action` 能力。
 - `src/platform-orchestrator.js` 根据 OpenClaw 提交的计划校验步骤和依赖；不同 Agent 的独立分析可以并发，同一 Agent 会话串行。一个请求中的多项设备操作必须合并成一个设备管家步骤；若错误拆成多个步骤，平台在任何 Agent 调用前拦截，OpenClaw 可自动合并重提一次。
-- `src/openclaw-platform-adapter.js` 使用 OpenClaw `runtime.subagent` 公共运行接口，并检查 Agent-to-Agent 白名单和会话可见性；适配器不连接 HA，不自动重试已发送但结果不明的调用。
+- `src/openclaw-platform-adapter.js` 使用 OpenClaw `runtime.subagent` 公共运行接口，并检查 Agent-to-Agent 白名单和会话可见性；单次调用默认最多等待 120 秒，超时后不自动重试，也不代表后台 Agent 已停止。
 - `src/openclaw-platform-plugin.js` 向配置的用户主 Agent（默认 `dev`）提供 `orchestrate_household_agents` 工具。OpenClaw 现有模型负责理解自然语言和提出计划；插件不新增 DeepSeek API。
 - OpenClaw 可提交 `dispatch`、`clarify` 或 `unsupported` 决定：信息不足时自然语言追问；没有已登记能力时明确说明暂不支持；即便模型误写了未登记的 Agent/能力，也会在任何 Agent/Gateway 调用前返回 `UNSUPPORTED`。这些路径不会猜造能力或执行设备动作。
 - 用户目标不清、设备动作冲突或业务 Agent 要求确认时，工具返回结构化问题/状态并停止后续步骤；OpenClaw 再用自然语言询问用户。仅计划错误地拆分设备动作时，OpenClaw 可按工具返回的专用结构码合并后自动重提一次，无需把内部错误暴露给用户。用户回复后应提交新计划；此 MVP 不跨 Gateway 重启恢复待答计划。

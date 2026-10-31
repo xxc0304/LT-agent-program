@@ -27,7 +27,7 @@
 
 ## 设备工具和多 Agent 调度工具
 
-能耗分析和设备维护的 OpenClaw 工具已接入：`analyze_energy_usage`、`evaluate_energy_effect`、`save_maintenance_schedule`、`get_device_maintenance_plan`、`record_device_maintenance_completed`，以及 `check_maintenance_reminders`、`start_maintenance_reminders`、`stop_maintenance_reminders`、`get_maintenance_reminder_status`、`list_maintenance_reminders`、`acknowledge_maintenance_reminder`、`snooze_maintenance_reminder`、`archive_completed_maintenance_reminders`。前两项复用节能 Agent 的只读分析；其余工具管理本地维护计划和提醒收件箱。维护计划查询默认回传最近 20 条完成记录，可用 `completion_schedule_id` 筛选某个维护计划，再用 `completion_limit`/`completion_offset` 分页；列表变化时用稳定的 `completion_cursor` 续读，完整记录仍保存在本地文件。周期检查默认关闭，需本机开关和用户明确启动；默认只运行到当前 Gateway 进程结束。仅当用户明确选择重启后恢复时，后台服务才在 Gateway 重启后恢复周期检查，且管理员开关仍需开启。用户明确提供暂缓时长后，可将提醒暂缓 5 分钟至 30 天；逾期升级会提前重新打开提醒。用户明确确认维护完成后，相关提醒状态改为 `completed` 并保留历史；只有活动收件箱接近 500 条上限时，才可在用户确认后按完成时间截止日期把已完成项移入归档区，再用 `include_archived: true` 查询。归档不删除历史，也不会触碰待处理/已读/暂缓提醒。提醒不发送外部通知，暂缓/已读都不等于维护完成。它们当前不读取真实 HA/电表，也不执行物理维护或设备控制。完整边界见 [`../docs/energy-operations-openclaw-tools-and-maintenance-store-v0.1.md`](../docs/energy-operations-openclaw-tools-and-maintenance-store-v0.1.md) 与 [`../docs/maintenance-reminder-inbox-v0.1.md`](../docs/maintenance-reminder-inbox-v0.1.md)。
+能耗分析、前后用量比较、预算进度估算和低价优化计算工具只开放给 `energy-saving` 会话；设备管家保留 `plan_energy_optimization` 委派入口，并负责待机候选的设备复查、确认和执行。部署安装器会显式拒绝设备管家直接使用能源分析工具，避免绕过能源管家职责。维护工具管理本地维护计划和提醒收件箱；完整工具范围与边界见 [`../docs/energy-operations-openclaw-tools-and-maintenance-store-v0.1.md`](../docs/energy-operations-openclaw-tools-and-maintenance-store-v0.1.md) 与 [`../docs/maintenance-reminder-inbox-v0.1.md`](../docs/maintenance-reminder-inbox-v0.1.md)。
 
 - `list_devices`：获取设备列表，可按 `domain` 过滤。
 - `get_state`：查询一个设备的当前状态。
@@ -35,7 +35,7 @@
 - `run_scene`：固定参数场景执行器；OpenClaw 对话层会拦截直接调用，用户场景统一走预览和确认流程。
 - `diagnose_device`：诊断指定设备或全部设备，只读返回在线状态、属性异常证据和处理建议。
 - `get_device_events`：按设备、`trace_id`、事件类型和数量查询动作、失败和诊断告警事件；默认保留最近 200 条进程内记录。真实 HA 后端可通过 `DEVICE_MANAGER_EVENT_LEDGER_PATH` 显式启用本地持久化账本，仍最多保留 200 条，并会剔除任意消息/参数、API 错误文本、令牌和 HA 主机地址。
-- `dispatch_agent_event`：将标准 Event 交给本地调度器，由节能 Agent 规划；对话工具输入一律视为未认证，产生设备写任务时会暂停询问，确认后再由设备管家执行并回读；不接收图片或 API Key。
+- `dispatch_agent_event`：将标准 Event 交给本地调度器，由能源管家规划；对话工具输入一律视为未认证，产生设备写任务时会暂停询问，确认后再由设备管家执行并回读；不接收图片或 API Key。
 - `evaluate_energy_event_with_independent_agent`：通过 2026.7.1-2 Gateway 调用独立注册的 `energy-saving` Agent；严格校验 Event/Task/`NO_ACTION` 与 trace。`NO_ACTION` 为正常无动作结果；Task 进入设备管家既有计划校验和确认流程。对话事件不等于认证传感器事实，因此候选设备动作默认暂停等待确认，不直接执行。
 - 内部 `createIndependentLearningEnergyWorkflow`：把经本地认证的结构化学习观测交给独立 `learning-companion` 产出 Event，再按时效、目标范围、置信度、复核状态和离位持续时间门禁决定是否调用 `energy-saving`；当前尚无已接线的可信视觉/传感器来源，因此不对话暴露、不接受模型自报认证。
 - `call_independent_agent`：通用独立 Agent Gateway 调用边界，仅返回经过契约校验的候选 Event/Task/`NO_ACTION`，本身不执行设备动作。
@@ -61,7 +61,7 @@
 - `get_room_energy_adaptation_report`：汇总本地结构化反馈和设备动作回读统计。没有能耗传感器与对照基线时，不报告节电 kWh 或百分比。
 - `start_household_device_monitor` / `stop_household_device_monitor` / `get_household_device_monitor_status`：用户明确要求持续监测后，启停当前 OpenClaw 进程内的只读状态订阅和每分钟健康巡检；真实 HA 使用 WebSocket，Mock 使用模拟事件。`off` 是正常状态、不告警；普通实体首次离线后等待 2 分钟复查，显式配置的安全关键实体等待 15 秒复查。宽限期内恢复会写入脱敏 `diagnostic_transient`、不生成故障告警；达到 3 台同时持续离线时，普通设备告警合并成一条 `diagnostic_shared_infrastructure_suspected`，避免把一次可能的断电/网络/HA 故障误报成多台设备各自损坏；门锁等明确配置的安全关键实体仍单独告警。数量降到阈值以下会写 `diagnostic_shared_infrastructure_cleared`，剩余普通设备恢复单独跟踪。系统不自动判定共同根因；故障恢复会清除活动告警并写入 `diagnostic_recovered`；实体从成功清单扫描中消失时写入 `diagnostic_tracking_ended`，但不代表设备已修复。不自动控制或修复设备。
 
-新实体默认不能控制、不能被节能 Agent 使用。OpenClaw 执行设备写操作前会重新扫描 HA，并检查目标实体已在清单中且登记批准；节能 Agent 则只收到已批准、显式 `energy_opt_in`、具备用户确认房间的灯/插座/空调。登记文件保存 HA 物理设备/实体标识、Registry 房间建议、用户核对与授权元数据，但不保存 HA 凭据或实时状态。默认放在当前 OpenClaw 状态目录下的 `device-manager/device-inventory.json`，也可用 `DEVICE_MANAGER_INVENTORY_PATH` 指定。
+新实体默认不能控制、不能被能源管家使用。OpenClaw 执行设备写操作前会重新扫描 HA，并检查目标实体已在清单中且登记批准；能源管家则只收到已批准、显式 `energy_opt_in`、具备用户确认房间的灯/插座/空调。登记文件保存 HA 物理设备/实体标识、Registry 房间建议、用户核对与授权元数据，但不保存 HA 凭据或实时状态。默认放在当前 OpenClaw 状态目录下的 `device-manager/device-inventory.json`，也可用 `DEVICE_MANAGER_INVENTORY_PATH` 指定。
 
 真实 HA 扫描通过 REST `/api/states` 读取实体，再以 WebSocket `/api/websocket` 读取 Device/Entity/Area Registry；可把多个实体按 `ha_device_id` 聚合展示，并过滤 HA Entity Registry 标记为 disabled 的实体。灯的亮度能力依据 `supported_color_modes`，空调/窗帘能力依据 `supported_features` 与温控范围识别；明确不支持的动作会在发送服务请求前拦截，未知能力会保留兼容路径并标记为未知。WebSocket 不可用时会退回 REST-only，并在结果中显式报告 `registry_enrichment.status: unavailable`；旧的 Registry 元数据不会因此被清掉。登记/授权仍按 HA `entity_id` 独立处理。该功能不扫描局域网，设备必须先由 HA 集成接入。自动化测试使用 Fake WebSocket，真实 HA 尚未实机联调。详细流程和验收范围见 [`docs/device-inventory-onboarding-v0.1.md`](../docs/device-inventory-onboarding-v0.1.md)。
 
@@ -94,10 +94,10 @@ DEVICE_MANAGER_CRITICAL_MONITOR_ENTITIES=lock.front_door,binary_sensor.smoke_ala
 `openclaw.plugin.json`。设备控制、候选计划和事件调度共享同一个 Home Assistant 后端与待确认工作流，
 因此跨 Agent 任务控制设备后能再次读取并验证变化。`run_mock_agent_chain_demo` 则刻意使用独立的 Mock HA，保证演示不会控制配置中的真实后端。
 
-`dispatch_agent_event` 的边界是：学习伴学 Agent 产生 `learning_behavior` Event，节能 Agent 只生成
+`dispatch_agent_event` 的边界是：学习伴学 Agent 产生 `learning_behavior` Event，能源管家只生成
 `device_action` Task，设备管家才执行动作。公开 OpenClaw 工具不会把 Event 的 `source_agent` 当作认证凭据；代码会重写来源为未认证输入。只有内部适配层通过已配置的可信入口提交的事件，才可能满足自动执行条件；当前插件尚未连接真实 HA 事件推送，因此公开工具触发的设备写操作都要确认。
 
-学习行为触发节能动作时，节能 Agent 必须先实际收到同区域、60 秒内、可信来源的 HA `occupancy_changed` 无人事件；学习模型不能在 payload 里自报传感器佐证。当前 `agent-event-demo.js` 的白名单与占用事件均为本地 Mock，不代表已连接真实传感器。动作确认细则见 [`docs/agent-action-confirmation-policy-v0.1.md`](../docs/agent-action-confirmation-policy-v0.1.md)。
+学习行为触发节能动作时，能源管家必须先实际收到同区域、60 秒内、可信来源的 HA `occupancy_changed` 无人事件；学习模型不能在 payload 里自报传感器佐证。当前 `agent-event-demo.js` 的白名单与占用事件均为本地 Mock，不代表已连接真实传感器。动作确认细则见 [`docs/agent-action-confirmation-policy-v0.1.md`](../docs/agent-action-confirmation-policy-v0.1.md)。
 
 ## OpenClaw Skills
 
@@ -114,9 +114,10 @@ DEVICE_MANAGER_CRITICAL_MONITOR_ENTITIES=lock.front_door,binary_sensor.smoke_ala
 
 - 只读查询、设备诊断、状态/事件查看：不需要确认。
 - 目标和动作明确的单设备即时操作：普通灯、插座/开关、空调和窗帘不要求额外操作确认；仍须通过家庭设备登记、在线状态、参数和新鲜证据校验，执行后回读。门锁和显式标记为高风险的设备除外。
-- 门锁锁定/解锁，以及显式标记为高风险的设备写操作：先展示目标与动作，等待用户后续明确同意。设备可通过 `requires_confirmation: true` 或 `risk_level: high/critical` 标记；真实 HA 也可通过 `HA_CONFIRMATION_REQUIRED_ENTITIES` 设置实体 ID 清单。工具参数 `confirmed: true` 不能绕过此门禁。
+- 门锁上锁，以及显式标记为高风险的设备写操作：先展示目标与动作，等待用户后续明确同意。设备可通过 `requires_confirmation: true` 或 `risk_level: high/critical` 标记；真实 HA 也可通过 `HA_CONFIRMATION_REQUIRED_ENTITIES` 设置实体 ID 清单。工具参数 `confirmed: true` 不能绕过此门禁。
+- 门锁解锁：用户在聊天中明确同意后，还必须由独立可信认证界面完成身份验证。认证适配器签发的短时授权绑定到审批 ID、计划指纹、门锁实体和 `unlock` 动作；设备写入层在调用 HA 前校验签名、受众、时效和一次性标识。认证服务未配置、未返回有效凭据或凭据不匹配时，Mock 与真实 HA 后端都会拒绝开锁。PIN、生物特征和签名凭据不在 OpenClaw 工具参数中，也不得进入对话。
 - 场景、多设备操作、跨 Agent 候选计划和未预授权自动化仍需确认。模糊目标/动作、多个可能解释或冲突计划必须先澄清，不能让模型猜测执行。
-- 节能 Agent 事件自动关灯：仅允许经内部可信入口、由节能 Agent 实际生成的灯具 `turn_off` 任务；公开对话工具提交的事件不会被视为可信传感器事实。当前没有真实 HA 事件适配器，所以公开事件工具触发写操作时会要求确认。
+- 能源管家事件自动关灯：仅允许经内部可信入口、由能源管家实际生成的灯具 `turn_off` 任务；公开对话工具提交的事件不会被视为可信传感器事实。当前没有真实 HA 事件适配器，所以公开事件工具触发写操作时会要求确认。
 - 目标/动作不清楚：先澄清，不提交写计划。必要证据缺失/过期或设备离线：拒绝/等待刷新，用户同意不能替代证据。
 - 同设备互斥动作：候选计划返回 `CLARIFICATION_REQUIRED`，不创建批准项；调度器队列中的同优先级冲突 fail-closed（冲突任务均不执行）。询问用户保留哪项或要求的先后顺序，再提交新计划。
 - 超时或执行后状态回读不确定：不自动重放命令；先用 `get_state` 或 `diagnose_device` 查清状态。
@@ -125,6 +126,7 @@ DEVICE_MANAGER_CRITICAL_MONITOR_ENTITIES=lock.front_door,binary_sensor.smoke_ala
   `POST_ACTION_VERIFICATION_FAILED`，不会伪装成成功。
 - 成功控制结果带有 `verified: true` 和 `verification_required: true`，同时写入
   `action_executed` 事件；失败、超时和状态不一致写入 `action_failed` 事件。
+
 - 一次性诊断可将异常写入 `diagnostic_alert`；持续监测下离线需先过宽限期复查，普通离线告警为 `warning`，显式关键实体为 `critical`。监测宽限期内恢复写 `diagnostic_transient`，不写故障告警。
 - 持续监测发现先前告警设备恢复健康时写入 `diagnostic_recovered` 事件；该事件只说明重新观测到健康状态，不表示系统执行了修复。
 - 持续监测发现实体从成功的 HA 清单扫描中消失时写入 `diagnostic_tracking_ended`，说明停止跟踪该实体的活动告警；不代表设备恢复。
@@ -132,7 +134,20 @@ DEVICE_MANAGER_CRITICAL_MONITOR_ENTITIES=lock.front_door,binary_sensor.smoke_ala
 - 个性化计划执行前会再次读取偏好和设备条件；计划内容或可用条件变化、设备离线或温控范围未知时拒绝执行。
 - 确认后的个性化温度只允许替换预定义场景中的空调设定温度，不允许模型临时拼装其他动作。
 - 场景执行审计会携带计划 ID 作为 `task_id` 和 `trace_id`，可以通过 `get_device_events` 追踪。
-- 预定义场景不含开锁动作；开锁仍必须由用户单独明确确认。
+- 预定义场景不含开锁动作；开锁必须经过聊天确认和独立可信认证。
+
+### 门锁可信认证适配器
+
+OpenClaw 插件通过服务端 HTTP 适配器请求可信认证；默认未配置，门锁解锁因此保持 fail-closed。配置项：
+
+- `DEVICE_MANAGER_LOCK_AUTH_URL`：认证服务 HTTPS URL；仅本机回环地址允许 HTTP。
+- `DEVICE_MANAGER_LOCK_AUTH_PUBLIC_KEY`：认证服务 Ed25519 公钥 PEM，不是私钥。
+- `DEVICE_MANAGER_LOCK_AUTH_ISSUER`：签发者标识。
+- `DEVICE_MANAGER_LOCK_AUTH_AUDIENCE`：可选，默认 `lt-agent-device-manager`。
+
+聊天确认后，插件向认证服务发送 `approval_id`、`plan_id`、`plan_fingerprint`、`device_id`、`action: unlock` 和待办到期时间。服务必须自行在可信界面验证用户身份，不得把 PIN 或生物特征回传给 OpenClaw；成功后返回 `{ "proof": "<Ed25519 signed compact JWT>" }`。JWT 需要包含 `iss`、`aud`、`sub`、`jti`、`iat`、`exp`，以及与请求完全一致的 `approval_id`、`plan_id`、`plan_fingerprint`、`device_id`、`action`。授权有效期最多 60 秒。设备管家只配置公钥并在执行写操作前验证，不接收签名私钥。服务缺失、超时、响应无效或验证失败都会停止动作。
+
+当前重放标识在 Gateway 进程内做一次性记录；待审批工作流重启后不会恢复为可执行项。若部署多个 Gateway 实例或要求跨进程共享防重放状态，需要认证服务/平台提供共享的一次性消费机制后再启用开锁。
 
 ## 故障诊断
 
@@ -186,7 +201,7 @@ cd device-manager
 npm run demo:independent-agent-chain
 ```
 
-该演示分别覆盖来源未认证时拒绝、学习事件待复核时不调用节能 Agent、节能 Agent 返回 `NO_ACTION`，以及节能 Agent 提交关灯候选后由设备管家要求确认。所有 Agent 回复和观测认证都是代码内测试夹具；它不是独立 OpenClaw Agent/DeepSeek 联调。演示使用新建的内存 Mock HA，灯态从初始化开始就是 `on`，不通过控制命令预置；报告应显示 `model_calls: 0`、`device_actions_executed: 0`、各场景 Mock 动作审计为 0，最终灯态仍为 `on`。
+该演示分别覆盖来源未认证时拒绝、学习事件待复核时不调用能源管家、能源管家返回 `NO_ACTION`，以及能源管家提交关灯候选后由设备管家要求确认。所有 Agent 回复和观测认证都是代码内测试夹具；它不是独立 OpenClaw Agent/DeepSeek 联调。演示使用新建的内存 Mock HA，灯态从初始化开始就是 `on`，不通过控制命令预置；报告应显示 `model_calls: 0`、`device_actions_executed: 0`、各场景 Mock 动作审计为 0，最终灯态仍为 `on`。
 
 验证 A-05 的接口故障联动（缺字段、超时、异常回执）：
 
@@ -227,7 +242,7 @@ npm run demo:device-monitor
 `learning-companion`、`energy-saving`、`device-manager`，以及客厅灯最终为 `off`。
 
 也可在设备管家 OpenClaw 对话中直接用自然语言发起同一条演示链路，例如：
-“演示一下孩子离开书桌十分钟后，节能 Agent 如何和设备管家协作关灯。”
+“演示一下孩子离开书桌十分钟后，能源管家如何和设备管家协作关灯。”
 Agent 应调用 `run_mock_agent_chain_demo`，并用自然语言总结三个 Agent、任务回执和最终灯态。
 该工具始终创建隔离的 Mock HA；工具内部临时生成的占用/学习事件只是合成演示数据，不是摄像头或真实 HA 传感器结果，
 也不会控制真实设备。此入口验证“自然语言请求 → OpenClaw 选择工具 → 本地 Mock 多 Agent 链路”，
@@ -286,12 +301,14 @@ openclaw agents add device-manager --workspace "$env:USERPROFILE\Documents\ChatG
 （`agents add` 后 `device-manager` 通常是 `agents.list[1]`）：
 
 ```powershell
-openclaw config set agents.list[1].tools.alsoAllow '["list_devices","get_state","control_device","run_scene","diagnose_device","get_device_events","dispatch_agent_event","submit_agent_plan","resolve_agent_action_confirmation","list_pending_agent_action_confirmations","run_mock_agent_chain_demo","run_mock_household_memory_learning_demo","run_mock_maintenance_reminder_demo","analyze_energy_usage","evaluate_energy_effect","save_maintenance_schedule","get_device_maintenance_plan","record_device_maintenance_completed","check_maintenance_reminders","start_maintenance_reminders","stop_maintenance_reminders","get_maintenance_reminder_status","list_maintenance_reminders","acknowledge_maintenance_reminder","snooze_maintenance_reminder","get_household_preference","list_household_memories","remember_household_preference","get_household_observation_consent","set_household_observation_consent","get_household_device_action_observation_consent","set_household_device_action_observation_consent","get_household_routine_reminder_consent","set_household_routine_reminder_consent","confirm_household_memory_candidate","preview_household_routine","forget_household_memory","plan_scene","execute_scene_plan","start_household_device_monitor","stop_household_device_monitor","get_household_device_monitor_status"]' --strict-json
+openclaw config set agents.list[1].tools.alsoAllow '["list_devices","get_state","control_device","run_scene","diagnose_device","get_device_events","dispatch_agent_event","submit_agent_plan","resolve_agent_action_confirmation","list_pending_agent_action_confirmations","run_mock_agent_chain_demo","run_mock_household_memory_learning_demo","run_mock_maintenance_reminder_demo","plan_energy_optimization","save_maintenance_schedule","get_device_maintenance_plan","record_device_maintenance_completed","check_maintenance_reminders","start_maintenance_reminders","stop_maintenance_reminders","get_maintenance_reminder_status","list_maintenance_reminders","acknowledge_maintenance_reminder","snooze_maintenance_reminder","get_household_preference","list_household_memories","remember_household_preference","get_household_observation_consent","set_household_observation_consent","get_household_device_action_observation_consent","set_household_device_action_observation_consent","get_household_routine_reminder_consent","set_household_routine_reminder_consent","confirm_household_memory_candidate","preview_household_routine","forget_household_memory","plan_scene","execute_scene_plan","start_household_device_monitor","stop_household_device_monitor","get_household_device_monitor_status"]' --strict-json
 openclaw config set plugins.allow '["device-manager","deepseek"]' --strict-json
 ```
 
+如果手动管理 Agent 权限，将能耗分析工具放给能源管家会话，而不是设备管家。标准部署优先使用仓库安装器，它会同时配置 `analyze_energy_usage`、`evaluate_energy_effect`、`forecast_energy_budget` 和 `calculate_energy_optimization` 的运行时会话限制。
+
 这两条只修改本机 OpenClaw 配置，不会把 API Key 写入项目。修改后重启 Gateway，
-重新打开 TUI；工具列表中应出现六个基础设备工具、`dispatch_agent_event`、三个候选计划/确认工具、三个 Mock 演示工具、五个能耗/维护计划工具和八个维护提醒工具（包含 `snooze_maintenance_reminder`、`archive_completed_maintenance_reminders`），`plan_scene`、`execute_scene_plan`，三个 HA 状态监测工具，以及
+重新打开 TUI；设备管家工具列表中应出现六个基础设备工具、`dispatch_agent_event`、三个候选计划/确认工具、三个 Mock 演示工具、四个能耗/维护计划工具和八个维护提醒工具（包含 `snooze_maintenance_reminder`、`archive_completed_maintenance_reminders`），`plan_scene`、`execute_scene_plan`，三个 HA 状态监测工具，以及
 `get_household_preference`、`list_household_memories`、`remember_household_preference`、
 `get_household_observation_consent`、`set_household_observation_consent`、
 `confirm_household_memory_candidate`、`preview_household_routine` 和
@@ -418,7 +435,7 @@ openclaw gateway run
 ```
 
 真实后端当前支持灯、开关/插座、空调、窗帘、门锁、普通传感器和二值传感器；设备控制会映射到 HA service，
-控制后重新读取实体状态并写入内存审计。所有门锁动作均须经过 OpenClaw 确认工作流，场景仍执行全量预检；
+控制后重新读取实体状态并写入内存审计。上锁须经过 OpenClaw 确认工作流；解锁还需要独立可信认证适配器，场景仍执行全量预检；
 个性化温度只有在实时读取到空调上下限且目标值仍在范围内时才会执行。
 退出 PowerShell 后临时令牌失效，不会保存到仓库。
 

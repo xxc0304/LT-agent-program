@@ -1,7 +1,9 @@
 import { validateIndependentOccupancyConfirmation } from "./occupancy-confirmation.js";
 import { analyzeEnergyConsumption } from "./energy-analysis.js";
+import { planEnergyOptimization } from "./energy-optimization.js";
 import { createEnergyStrategy } from "./energy-strategy.js";
 import { evaluateEnergyEffect } from "./energy-effectiveness.js";
+import { forecastEnergyBudget } from "./energy-budget-forecast.js";
 
 const CONTRACT_VERSION = "0.1";
 const AGENT_ID = "energy-saving";
@@ -52,6 +54,10 @@ function normalizeArea(value) {
   const aliases = {
     "客厅": "living_room",
     "卧室": "bedroom",
+    "厨房": "kitchen",
+    "卫生间": "bathroom",
+    "洗手间": "bathroom",
+    "书房": "study",
     "书桌": "desk",
     "学习区": "study_area",
   };
@@ -187,9 +193,9 @@ export class EnergySavingAgent {
   get manifest() {
     return {
       agent_id: AGENT_ID,
-      display_name: "节能 Agent",
+      display_name: "能源管家",
       version: "0.1",
-      capabilities: ["energy_analysis", "consumption_profiling", "budget_advisory", "energy_effect_evaluation", "device_action_planning"],
+      capabilities: ["energy_analysis", "consumption_profiling", "budget_advisory", "budget_pace_forecast", "energy_effect_evaluation", "flexible_load_scheduling_advice", "standby_candidate_detection", "device_action_planning"],
       consumes: ["occupancy_changed", "home_mode_changed", "learning_behavior", "user_device_override"],
       produces: ["device_action"],
       execution_mode: "local",
@@ -219,6 +225,90 @@ export class EnergySavingAgent {
     return evaluateEnergyEffect(input);
   }
 
+  /** Estimate budget pace from explicitly complete daily totals; advice only. */
+  forecastEnergyBudget(input = {}) {
+    return forecastEnergyBudget(input);
+  }
+
+  /** Plan low-cost time windows and review-only standby candidates from explicit input data. */
+  planEnergyOptimization(input = {}) {
+    return planEnergyOptimization(input);
+  }
+
+  /**
+   * Convert explicitly labeled standby candidates into standard device Tasks.
+   * Current inventory, energy permission, area, state and capability are
+   * re-read by the Energy Agent; the returned Tasks still require the
+   * device-manager plan workflow and user confirmation.
+   */
+  async planStandbyOptimizationTasks({ candidates = [], event_id, trace_id, reserve = true } = {}) {
+    if (!Array.isArray(candidates) || candidates.length > 11) {
+      return { status: "REJECTED", tasks: [], decisions: [], error: { code: "INVALID_STANDBY_CANDIDATES", message: "候选设备必须是最多 11 项的数组" } };
+    }
+    if (typeof event_id !== "string" || !event_id.trim() || typeof trace_id !== "string" || !trace_id.trim()) {
+      return { status: "REJECTED", tasks: [], decisions: [], error: { code: "INVALID_TRACE_CONTEXT", message: "event_id 与 trace_id 必须是非空字符串" } };
+    }
+    const devices = await this.#listDevices();
+    if (!devices) {
+      return { status: "FAILED", tasks: [], decisions: [], error: { code: "DEVICE_STATE_UNAVAILABLE", message: "无法读取已授权设备当前状态；能源管家不生成任务" } };
+    }
+    const occurredAt = nowIso(this.clock);
+    const seen = new Set();
+    const tasks = [];
+    const decisions = [];
+    for (const [index, candidate] of candidates.entries()) {
+      const deviceId = candidate?.control_device_id;
+      if (typeof deviceId !== "string" || !deviceId.trim() || seen.has(deviceId)) {
+        decisions.push({ device_id: deviceId ?? null, status: "skipped", reason: seen.has(deviceId) ? "DUPLICATE_CONTROL_DEVICE" : "CONTROL_DEVICE_ID_REQUIRED" });
+        continue;
+      }
+      seen.add(deviceId);
+      const thresholdW = Number.isFinite(candidate?.threshold_w) ? candidate.threshold_w : 5;
+      const maximumAgeMs = Number.isFinite(candidate?.measurement_max_age_ms)
+        ? candidate.measurement_max_age_ms
+        : 5 * 60_000;
+      let reason = null;
+      const timestamp = Date.parse(candidate?.recorded_at);
+      if (candidate?.load_mode !== "standby") reason = "EXPLICIT_STANDBY_LABEL_REQUIRED";
+      else if (!Number.isFinite(candidate?.observed_power_w) || candidate.observed_power_w <= thresholdW) reason = "BELOW_STANDBY_THRESHOLD";
+      else if (typeof candidate?.recorded_at !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(candidate.recorded_at)
+        || !Number.isFinite(timestamp) || this.clock() - timestamp > maximumAgeMs || timestamp - this.clock() > 60_000) reason = "STALE_OR_FUTURE_STANDBY_READING";
+      else if (!normalizeArea(candidate?.area)) reason = "ROOM_MAPPING_REQUIRED";
+      const device = devices.find((item) => item.device_id === deviceId);
+      if (!reason && !device) reason = "DEVICE_NOT_ENERGY_AUTHORIZED";
+      else if (!reason && (device.inventory_approval_status !== "approved" || device.energy_opt_in !== true)) reason = "DEVICE_NOT_ENERGY_AUTHORIZED";
+      else if (!reason && (device.domain !== "switch" || !device.available || String(device.state).toLowerCase() !== "on")) reason = "DEVICE_NOT_READY_FOR_STANDBY_ACTION";
+      else if (!reason && device.capabilities?.actions?.turn_off?.supported !== true) reason = "TURN_OFF_CAPABILITY_NOT_CONFIRMED";
+      else if (!reason && deviceArea(device) !== normalizeArea(candidate.area)) reason = "CONTROL_DEVICE_AREA_MISMATCH";
+      if (reason) {
+        decisions.push({ device_id: deviceId, status: "skipped", reason });
+        continue;
+      }
+
+      const event = {
+        event_id,
+        source_agent: "energy-optimization-tool-unverified-input",
+        event_type: "energy_optimization_requested",
+        occurred_at: occurredAt,
+        privacy_level: "family",
+        trace_id,
+        payload: { area: normalizeArea(candidate.area) },
+      };
+      const planned = this.#planForDevice(event, device, trace_id);
+      if (!planned.task) {
+        decisions.push({ device_id: deviceId, status: "skipped", reason: planned.decision.reason ?? "TASK_NOT_CREATED" });
+        continue;
+      }
+      planned.task.metadata.measured_device_id = candidate.measured_device_id;
+      planned.task.metadata.observed_power_w = candidate.observed_power_w;
+      planned.task.metadata.load_mode = "standby";
+      tasks.push(planned.task);
+      decisions.push({ device_id: deviceId, status: "planned", action: "turn_off", reason: "STANDBY_LOAD_REVIEW" });
+      if (reserve === true) this.lastIssuedAt.set(deviceId, this.clock());
+    }
+    return { status: tasks.length > 0 ? "PLANNED" : "NO_ACTION", event_id, trace_id, tasks, decisions };
+  }
+
   /**
    * Plan from an event and an optional snapshot. This pure-ish method is
    * useful for tests and for a scheduler that already owns device state.
@@ -243,7 +333,7 @@ export class EnergySavingAgent {
         status: "REJECTED",
         error: {
           code: "STALE_EVENT",
-          message: "事件已过期；为避免延迟事件误关设备，节能 Agent 不生成任务",
+          message: "事件已过期；为避免延迟事件误关设备，能源管家不生成任务",
           age_ms: eventAgeMs,
           max_age_ms: this.config.maxEventAgeMs,
         },
@@ -256,7 +346,7 @@ export class EnergySavingAgent {
         status: "REJECTED",
         error: {
           code: "EVENT_FROM_FUTURE",
-          message: "事件时间超出允许的时钟偏差；节能 Agent 不生成任务",
+          message: "事件时间超出允许的时钟偏差；能源管家不生成任务",
           future_by_ms: -eventAgeMs,
           max_future_skew_ms: this.config.maxFutureSkewMs,
         },
@@ -325,7 +415,7 @@ export class EnergySavingAgent {
         status: "FAILED",
         error: {
           code: "DEVICE_STATE_UNAVAILABLE",
-          message: "无法获取当前设备状态，节能 Agent 不生成控制任务",
+          message: "无法获取当前设备状态，能源管家不生成控制任务",
         },
       });
     }
@@ -591,6 +681,11 @@ export class EnergySavingAgent {
     const occupancyEvidence = event.event_type === "learning_behavior"
       ? this.latestOccupancyByArea.get(normalizeArea(event.payload?.area))
       : null;
+    const reasonCode = event.event_type === "home_mode_changed"
+      ? "HOME_AWAY"
+      : event.event_type === "energy_optimization_requested"
+        ? "STANDBY_LOAD_REVIEW"
+        : "AREA_UNOCCUPIED";
     const task = {
       schema_version: CONTRACT_VERSION,
       task_id: `task-${taskIdPart(event.event_id)}-${taskIdPart(deviceId)}-${action}`,
@@ -617,7 +712,7 @@ export class EnergySavingAgent {
       idempotency_key: idempotencyKey,
       trace_id: traceId,
       metadata: {
-        reason_code: event.event_type === "home_mode_changed" ? "HOME_AWAY" : "AREA_UNOCCUPIED",
+        reason_code: reasonCode,
         trigger_event_id: event.event_id,
         trigger_event_type: event.event_type,
         device_name: device.name,

@@ -2,6 +2,7 @@ import { EnergySavingAgent } from "../../energy-saving/src/energy-agent.js";
 import { MultiAgentScheduler } from "../../multi-agent-orchestrator/src/scheduler.js";
 import { createAgentPlanTools } from "./agent-plan-tools.js";
 import { createDeviceTaskRuntime } from "./task-runtime.js";
+import { createHttpLockAuthorizationProvider } from "./lock-authorization.js";
 
 const FORBIDDEN_EVENT_KEYS = new Set([
   "api_key",
@@ -71,6 +72,8 @@ export function createOrchestratorBridge(deviceRuntime, {
   trustedEventSourceAgents = [],
   deviceInventory = null,
   approvalStateStore = null,
+  lockAuthorizationProvider = createHttpLockAuthorizationProvider(),
+  clock = () => Date.now(),
 } = {}) {
   if (!deviceRuntime || typeof deviceRuntime.invoke !== "function") {
     throw new Error("orchestrator bridge 需要一个可调用 invoke() 的设备运行时");
@@ -78,6 +81,7 @@ export function createOrchestratorBridge(deviceRuntime, {
 
   const energyAgent = new EnergySavingAgent({
     config: { trustedOccupancySourceAgents },
+    clock,
     deviceClient: {
       listDevices: () => deviceInventory
         ? deviceInventory.listEnergyEligibleDevices()
@@ -86,7 +90,14 @@ export function createOrchestratorBridge(deviceRuntime, {
   });
   const deviceTaskRuntime = createDeviceTaskRuntime(deviceRuntime);
   const scheduler = new MultiAgentScheduler();
-  const agentPlanTools = createAgentPlanTools({ deviceRuntime, deviceTaskRuntime, energyAgent, approvalStateStore });
+  const agentPlanTools = createAgentPlanTools({
+    deviceRuntime,
+    deviceTaskRuntime,
+    energyAgent,
+    approvalStateStore,
+    lockAuthorizationProvider,
+    clock,
+  });
   const trustedEventObjects = new WeakSet();
   const trustedTasks = new Map();
   const taskIdsByEvent = new Map();

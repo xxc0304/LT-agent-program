@@ -127,6 +127,7 @@ async function withNewSQLiteTarget(destinationPath, operation, createContents) {
   );
   try {
     await createContents(temporaryPath);
+    if (process.platform !== "win32") await fs.chmod(temporaryPath, 0o600);
     await assertNewDestination(destinationPath, operation);
     try {
       // Hard-link publication is atomic and exclusive because the temporary

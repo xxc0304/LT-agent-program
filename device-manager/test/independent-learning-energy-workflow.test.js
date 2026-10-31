@@ -101,7 +101,7 @@ test("未由可信本地适配器认证的观测在调用任何模型前被拒�
   assert.equal(executeCalls.length, 0);
 });
 
-test("学习事件经校验后依次交给节能 Agent；NO_ACTION 正常结束", async () => {
+test("学习事件经校验后依次交给能源管家；NO_ACTION 正常结束", async () => {
   const input = observation();
   const { workflow, calls, executeCalls } = workflowWith({
     "learning-companion": (request) => {
@@ -131,7 +131,7 @@ test("学习事件经校验后依次交给节能 Agent；NO_ACTION 正常结束"
   assert.equal(executeCalls.length, 0);
 });
 
-test("课堂场景、未指定目标孩子或待复核事件不会调用节能 Agent", async () => {
+test("课堂场景、未指定目标孩子或待复核事件不会调用能源管家", async () => {
   for (const patch of [
     { annotation_scope: "classroom_scene", target_child_specified: false },
     { target_child_specified: false },

@@ -2,7 +2,7 @@
 
 > 给换设备后的 Codex/协作者：先阅读本文件和根目录 `AGENTS.md`，再开始工作。不要重新研究已经完成的内容，也不要要求用户重复粘贴 API Key。当前工作区的密钥和本地数据均不在 Git 中。
 
-更新时间：2026-10-18
+更新时间：2026-10-31
 
 ## 1. 项目目标
 
@@ -56,7 +56,7 @@
 - 当前学习行为模块测试通过 20/20。
 - 场景标注审计区分人工复核置信度和 AI 初标置信度，允许审计未完成模板；已新增多标注者逐对一致率审计模式（活动集合、姿态、朝向）。25 条 AI 初标的结构审计见 `learning-behavior/ANNOTATION_FIRST_PASS_AUDIT_2026-09-30.md`；第二位人工标注者的独立复核仍未完成，不能计算人工标注一致率或将 AI 初标称为真值。
 
-### 节能 Agent MVP
+### 能源管家 MVP
 
 目录：`energy-saving/`
 
@@ -66,7 +66,7 @@
 - 只规划任务，不直接调用 Home Assistant，所有设备动作仍由 `device-manager` 执行并回读验证；
 - 对门锁、传感器和安全设备做保护，不接受低置信度或需要人工复核的学习行为结果；
 - 已加入幂等键、事件去重、用户手动保持期、设备冷却时间和 `trace_id`；
-- 已提供 Mock 端到端演示：客厅无人 10 分钟 → 节能 Agent → 设备管家 → 状态回读；
+- 已提供 Mock 端到端演示：客厅无人 10 分钟 → 能源管家→ 设备管家 → 状态回读；
 - `energy-saving` 测试通过 23/23，设备管家全套测试通过 84/84；
 - 已通过 `multi-agent-orchestrator` 接入调度器，当前仍是规则型 Mock MVP，真实传感器事件待其他组提供。
 
@@ -186,12 +186,12 @@ node src/evaluate-scb.js --manifest "data\scb\manifest.jsonl" --per-label 3 --ou
 
 ## 7. 给下一次会话的启动提示
 
-**最新运行状态补充（2026-10-16）：**本机 `2026.7.1-2` Control UI 浏览器已配对；用户授权后已对隔离 Gateway 执行 safe restart。重启后，`device-manager → learning-companion → energy-saving` 三 Agent 合成联调通过：学习 Agent 的 Event 经本地 Schema 校验，节能 Agent 对低置信度且需复核、缺少可信 HA 无人佐证的合成事件返回 `NO_ACTION / LEARNING_BEHAVIOR_WITHOUT_TRUSTED_OCCUPANCY_WINDOW`；设备动作数 0，未连接真实 HA。使用 DeepSeek V4 Flash、thinking off；API 用量已产生，费用未核对。CLI `gateway probe` 仍单独报告 `missing scope: operator.read`（本轮未复查），不影响浏览器与 Agent 调用。详见 `docs/openclaw-independent-agent-orchestration-v0.1.md`。不要升级 OpenClaw，不要 reset/delete Agent 会话，也不要连接真实 HA 或操作设备。
+**最新运行状态补充（2026-10-16）：**本机 `2026.7.1-2` Control UI 浏览器已配对；用户授权后已对隔离 Gateway 执行 safe restart。重启后，`device-manager → learning-companion → energy-saving` 三 Agent 合成联调通过：学习 Agent 的 Event 经本地 Schema 校验，能源管家对低置信度且需复核、缺少可信 HA 无人佐证的合成事件返回 `NO_ACTION / LEARNING_BEHAVIOR_WITHOUT_TRUSTED_OCCUPANCY_WINDOW`；设备动作数 0，未连接真实 HA。使用 DeepSeek V4 Flash、thinking off；API 用量已产生，费用未核对。CLI `gateway probe` 仍单独报告 `missing scope: operator.read`（本轮未复查），不影响浏览器与 Agent 调用。详见 `docs/openclaw-independent-agent-orchestration-v0.1.md`。不要升级 OpenClaw，不要 reset/delete Agent 会话，也不要连接真实 HA 或操作设备。
 
 **同日补充：**独立 `energy-saving` Agent 通过 Gateway + DeepSeek V4 Flash 为合成“离家、客厅灯亮”事件生成了 `P3 turn_off light.living_room` 候选 Task。该 Task 回放到本地 Mock 设备管家后得到 `CHALLENGE`；模拟暂缓时待办保留，模拟拒绝后待办关闭并返回 `REJECTED`。另以临时状态文件模拟设备管家进程重建，旧确认恢复为 `RECOVERY_REQUIRED`，尝试批准仍不执行。补充覆盖候选 Task 伪造可信 HA 元数据仍要求确认，以及 Agent 调用失败时不进入执行。Mock 灯始终保持 `on`，设备动作增量为 0。相关用例已固化在 `device-manager/test/independent-energy-workflow.test.js`；定向测试 8/8、设备管家全量测试 221/221、跨模块/演示验证 10/10 通过。进程重建不是实际 Gateway 重启；不连接真实 HA、不操作真实设备。详见上方编排验证记录。
 
 ```text
-请先阅读项目根目录的 AGENTS.md 和 PROJECT_HANDOFF.md。当前本机 OpenClaw `2026.7.1-2` profile 已注册 learning-companion、energy-saving 和 device-manager；Gateway 白名单已补齐作息预览工具，计划任务绑定当前 profile 且运行中；这些均为本机状态，不随仓库迁移。仓库内编排器仍为进程内 Mock，不等于独立 OpenClaw Agent 间远程通信。设备管家 OpenClaw TUI 新增自然语言入口 `run_mock_agent_chain_demo`：明确演示请求可触发合成 learning_departure 事件链，专用 Mock HA，不代表真实传感器/视觉或实设备控制；需在本机 TUI 复测。不要重新下载完整 SCB 数据集，不要索要或打印 API Key，不要访问家庭记忆文件。当前回归结果：设备管家 84/84、Mock 验收 10/10、调度器 28/28、节能 Agent 23/23、学习行为 20/20、记忆模块 21/21（含 6 项临时数据加密备份/恢复测试）、公共兼容模块 5/5；插件验证与 18 个有效/4 个无效契约样例也通过。学习离位关灯必须先收到当前进程中可信 HA 无人事件；OpenClaw 插件默认没有可信来源白名单，真实 HA 来源认证待联调。学习行为 25 条 AI 初标仅做了结构审计，独立人工复核未完成。加密备份库未用于真实家庭记忆；活动记忆仍是明文 JSON。跨组契约评审不阻塞本组独立开发。
+请先阅读项目根目录的 AGENTS.md 和 PROJECT_HANDOFF.md。当前本机 OpenClaw `2026.7.1-2` profile 已注册 learning-companion、energy-saving 和 device-manager；Gateway 白名单已补齐作息预览工具，计划任务绑定当前 profile 且运行中；这些均为本机状态，不随仓库迁移。仓库内编排器仍为进程内 Mock，不等于独立 OpenClaw Agent 间远程通信。设备管家 OpenClaw TUI 新增自然语言入口 `run_mock_agent_chain_demo`：明确演示请求可触发合成 learning_departure 事件链，专用 Mock HA，不代表真实传感器/视觉或实设备控制；需在本机 TUI 复测。不要重新下载完整 SCB 数据集，不要索要或打印 API Key，不要访问家庭记忆文件。当前回归结果：设备管家 84/84、Mock 验收 10/10、调度器 28/28、能源管家23/23、学习行为 20/20、记忆模块 21/21（含 6 项临时数据加密备份/恢复测试）、公共兼容模块 5/5；插件验证与 18 个有效/4 个无效契约样例也通过。学习离位关灯必须先收到当前进程中可信 HA 无人事件；OpenClaw 插件默认没有可信来源白名单，真实 HA 来源认证待联调。学习行为 25 条 AI 初标仅做了结构审计，独立人工复核未完成。加密备份库未用于真实家庭记忆；活动记忆仍是明文 JSON。跨组契约评审不阻塞本组独立开发。
 ```
 
 ## 8. 2026-09-15 飞书任务安排更新（高层结论）
@@ -246,7 +246,7 @@ node src/evaluate-scb.js --manifest "data\scb\manifest.jsonl" --per-label 3 --ou
 
 ## 2026-10-18 维护周期本地提醒补充
 
-在已接入 OpenClaw 的维护计划之上增加了本地提醒收件箱：支持按需检查，以及经过本机开关和用户明确启动后的周期检查；重复提醒按维护周期去重，升级为逾期时更新/重新打开提醒。只有本地收件箱，没有手机/外部推送；提醒已读不代表维护完成；Gateway 重启后周期检查不会自动恢复。相关代码在 `device-manager/src/maintenance-reminder-{inbox,tools}.js`，说明见 `docs/maintenance-reminder-inbox-v0.1.md`。本地设备管家全量测试 248/248、Mock 验收 11/11、节能 Agent 测试 43/43 通过，插件验证及契约样例验证通过。没有重启本机 Gateway、连接真实 HA 或操作物理设备。
+在已接入 OpenClaw 的维护计划之上增加了本地提醒收件箱：支持按需检查，以及经过本机开关和用户明确启动后的周期检查；重复提醒按维护周期去重，升级为逾期时更新/重新打开提醒。只有本地收件箱，没有手机/外部推送；提醒已读不代表维护完成；Gateway 重启后周期检查不会自动恢复。相关代码在 `device-manager/src/maintenance-reminder-{inbox,tools}.js`，说明见 `docs/maintenance-reminder-inbox-v0.1.md`。本地设备管家全量测试 248/248、Mock 验收 11/11、能源管家测试 43/43 通过，插件验证及契约样例验证通过。没有重启本机 Gateway、连接真实 HA 或操作物理设备。
 
 2026-10-18 又增加 `npm --prefix device-manager run demo:maintenance-reminders`：用纯合成数据验证提醒跨独立 Node.js 进程持久化、同周期去重、已读不等于维护完成、逾期升级重新进入待处理列表；演示运行后清理临时数据。此项仍不是 Gateway 实际加载或真实 HA/设备验收。
 
@@ -268,15 +268,15 @@ node src/evaluate-scb.js --manifest "data\scb\manifest.jsonl" --per-label 3 --ou
 
 2026-10-18 继续补齐维护计划持久存储的并发保护：`MaintenanceScheduleStore` 在进程内串行化之外，对计划新增/更新和维护完成登记使用文件级独占锁，避免多个 Node/OpenClaw 写入者并发读改写互相覆盖。锁冲突返回 `MAINTENANCE_STORE_LOCKED` 且不改数据、不清理他方锁；进程异常退出导致的陈旧锁不会自动删除，需运维核对后人工处理。独立 Node 子进程创建竞争锁后，计划修改和完成登记均正确拒写，解锁后重试成功。设备管家全量测试 267/267、Mock 验收 11/11、插件校验、公共契约测试 5/5、17 个有效/4 个预期无效契约样例均通过；维护提醒隔离演示通过并清除临时数据。没有接触正式维护文件、Gateway、模型 API、真实 HA 或设备。
 
-2026-10-18 增加只读维护存储锁诊断命令 `npm --prefix device-manager run maintenance:lock-status`，可用 `-- --path <schedule.json>` 检查临时/指定路径。只读取 `.lock` 元数据，区分无锁、PID 仍存在、PID 不存在和元数据损坏；不读取维护计划/完成正文、不显示 token、不修改/删除文件。PID 存在不证明仍是原进程（可能复用），所以不自动清理。OpenClaw 工具层也验证了保存计划和登记维护完成在锁冲突时均明确返回 `MAINTENANCE_STORE_LOCKED`，不会虚报成功。专项测试 18/18，设备管家全量测试 269/269、Mock 验收 11/11、插件/契约校验通过；节能 Agent 43/43。只用临时数据和只读 CLI smoke；未访问正式维护文件、重启 Gateway、调用模型 API 或接入真实 HA/设备。
+2026-10-18 增加只读维护存储锁诊断命令 `npm --prefix device-manager run maintenance:lock-status`，可用 `-- --path <schedule.json>` 检查临时/指定路径。只读取 `.lock` 元数据，区分无锁、PID 仍存在、PID 不存在和元数据损坏；不读取维护计划/完成正文、不显示 token、不修改/删除文件。PID 存在不证明仍是原进程（可能复用），所以不自动清理。OpenClaw 工具层也验证了保存计划和登记维护完成在锁冲突时均明确返回 `MAINTENANCE_STORE_LOCKED`，不会虚报成功。专项测试 18/18，设备管家全量测试 269/269、Mock 验收 11/11、插件/契约校验通过；能源管家43/43。只用临时数据和只读 CLI smoke；未访问正式维护文件、重启 Gateway、调用模型 API 或接入真实 HA/设备。
 
-2026-10-18 将维护存储的跨进程锁扩展到读取路径：`listSchedules`、`listCompletions` 和 `readSnapshot` 现在也在锁内读取，避免 Windows 文件替换回退期间读取半成品；`get_device_maintenance_plan` 改为在一个 `readSnapshot()` 内同时获取计划与完成历史，避免分两次读取造成不同时点混合。发生冲突时查询也失败关闭并回传 `MAINTENANCE_STORE_LOCKED`，不产生部分/混合视图。专项维护测试 18/18、设备管家全量 269/269、Mock 验收 11/11、插件与契约校验通过；节能 Agent 43/43；维护提醒 Mock 演示通过并清除临时数据。没有接触真实维护文件、Gateway、模型 API、HA 或设备。
+2026-10-18 将维护存储的跨进程锁扩展到读取路径：`listSchedules`、`listCompletions` 和 `readSnapshot` 现在也在锁内读取，避免 Windows 文件替换回退期间读取半成品；`get_device_maintenance_plan` 改为在一个 `readSnapshot()` 内同时获取计划与完成历史，避免分两次读取造成不同时点混合。发生冲突时查询也失败关闭并回传 `MAINTENANCE_STORE_LOCKED`，不产生部分/混合视图。专项维护测试 18/18、设备管家全量 269/269、Mock 验收 11/11、插件与契约校验通过；能源管家43/43；维护提醒 Mock 演示通过并清除临时数据。没有接触真实维护文件、Gateway、模型 API、HA 或设备。
 
-2026-10-18 为维护计划存储增加有限时等待锁释放：跨进程锁冲突时默认最多等待 1000ms、每 25ms 重试；超时仍失败关闭并返回 `MAINTENANCE_STORE_LOCKED`，不覆盖或删除他方锁。`MaintenanceScheduleStore.lockWaitMs` 可设为 0–5000ms，非法值构造时拒绝。新增子进程测试覆盖短暂锁冲突等待后成功写入，并调整冲突失败测试为 10ms 等待以保持快速稳定。专项维护/工具测试 20/20、设备管家全量 271/271、Mock 验收 11/11、插件校验、公共契约测试 5/5、17 个有效/4 个预期无效契约样例通过；节能 Agent 43/43；维护提醒合成演示通过并清除临时状态。没有接触正式维护数据、Gateway、模型 API、HA 或设备。
+2026-10-18 为维护计划存储增加有限时等待锁释放：跨进程锁冲突时默认最多等待 1000ms、每 25ms 重试；超时仍失败关闭并返回 `MAINTENANCE_STORE_LOCKED`，不覆盖或删除他方锁。`MaintenanceScheduleStore.lockWaitMs` 可设为 0–5000ms，非法值构造时拒绝。新增子进程测试覆盖短暂锁冲突等待后成功写入，并调整冲突失败测试为 10ms 等待以保持快速稳定。专项维护/工具测试 20/20、设备管家全量 271/271、Mock 验收 11/11、插件校验、公共契约测试 5/5、17 个有效/4 个预期无效契约样例通过；能源管家43/43；维护提醒合成演示通过并清除临时状态。没有接触正式维护数据、Gateway、模型 API、HA 或设备。
 
-2026-10-18 增加多写进程并发验收：4 个独立 Node 进程同时向同一维护计划文件新增不同记录，全部成功退出，最终快照保留全部 4 条记录且没有残留锁。该测试使用临时目录和 5 秒最大等待参数，不修改运行中的 OpenClaw 或正式维护文件。专项维护/工具测试 21/21、设备管家全量 272/272、Mock 验收 11/11、插件校验、公共契约测试 5/5、17 个有效/4 个预期无效样例及节能 Agent 43/43 均通过。未连接真实 HA/设备，未重启 Gateway 或调用模型 API。
+2026-10-18 增加多写进程并发验收：4 个独立 Node 进程同时向同一维护计划文件新增不同记录，全部成功退出，最终快照保留全部 4 条记录且没有残留锁。该测试使用临时目录和 5 秒最大等待参数，不修改运行中的 OpenClaw 或正式维护文件。专项维护/工具测试 21/21、设备管家全量 272/272、Mock 验收 11/11、插件校验、公共契约测试 5/5、17 个有效/4 个预期无效样例及能源管家43/43 均通过。未连接真实 HA/设备，未重启 Gateway 或调用模型 API。
 
-2026-10-18 新增异常退出残留锁演练：模拟写入进程建立锁后退出，诊断器识别为 `LOCK_OWNER_PROCESS_NOT_FOUND`；维护存储和 CLI 均保持只读，后续写入明确返回 `MAINTENANCE_STORE_LOCKED`，锁文件及原始维护文件状态保持不变。测试没有实现自动清锁，人工确认仍是必要的安全边界。专项维护/工具测试 22/22、设备管家全量 273/273、Mock 验收 11/11、插件校验、公共契约测试 5/5、17 个有效/4 个预期无效样例及节能 Agent 43/43 均通过。仅使用临时目录，未访问正式维护数据、重启 Gateway、调用模型 API 或连接 HA/设备。
+2026-10-18 新增异常退出残留锁演练：模拟写入进程建立锁后退出，诊断器识别为 `LOCK_OWNER_PROCESS_NOT_FOUND`；维护存储和 CLI 均保持只读，后续写入明确返回 `MAINTENANCE_STORE_LOCKED`，锁文件及原始维护文件状态保持不变。测试没有实现自动清锁，人工确认仍是必要的安全边界。专项维护/工具测试 22/22、设备管家全量 273/273、Mock 验收 11/11、插件校验、公共契约测试 5/5、17 个有效/4 个预期无效样例及能源管家43/43 均通过。仅使用临时目录，未访问正式维护数据、重启 Gateway、调用模型 API 或连接 HA/设备。
 
 ## 2026-10-23 家庭记忆 SQLite 后端集成
 
@@ -285,3 +285,43 @@ node src/evaluate-scb.js --manifest "data\scb\manifest.jsonl" --per-label 3 --ou
 本次复核 Node.js v24.19.0 下记忆模块测试 63/63、OpenClaw 插件记忆运行时测试 4/4 通过。SQLite 数据库文件当前不做应用层加密；在线备份/恢复为人工触发、仅新建目标，需 Node.js 22.16+。真实 Gateway 部署仍需由目标环境显式启用 SQLite、核对持久化路径与 ACL/磁盘加密，并按统一 Gateway 运维流程加载插件；本地测试未修改老师统一 Gateway，也未写入真实家庭记忆。
 
 2026-10-23 完成 SQLite 交付包安全与重复安装硬化：交付包现在按扩展名统一排除 `.sqlite`、`.sqlite3`、`.db` 及 `-wal`/`-shm`/`-journal` 旁路文件，不再依赖 `family-memory` 文件名前缀；安装器不接受相对或位于解压包目录内的 SQLite 路径，并在未提供新路径时保留已配置的显式、隐式或兼容环境变量数据库路径。假设台账已补全数据库路径耦合校验、相对路径基准、重装语义、环境变量区分及安全重启提示行为。回归与包内验收 `Test-DeploymentPackage.ps1 -InstallerChecks -InstallFlow -ArchivePath ...v0.1.23.zip` 95 项通过；新包 `output/deployment/LT-agent-program-deployment-v0.1.23.zip` 共 305 个文件，ZIP 检查确认未包含 SQLite 数据库/旁路文件，旧版 0.1.22 未覆盖。复核来源为同模型家族的 provisional 扫描并已自行核验关键代码；未重启或修改实际 OpenClaw Gateway，也未读取真实家庭数据。
+
+## 2026-10-30 门锁认证与审批恢复本地验证更新
+
+- 门锁可信认证代码现有 HTTP 适配器和 Ed25519 校验器；本轮新增本机假认证服务端到端测试。正确签名授权可以通过 Mock 门锁写入并回读为 unlocked；授权绑定错误设备时写入被拒绝，状态保持 locked。
+- Node 和 PowerShell 安装器在 Mock 验证时清除 HA 与门锁认证环境变量。部署手册记录了服务 HTTP 契约、Ed25519 声明和密钥注入边界。
+- **审批重启恢复已经实现，不是待开发项。** 插件启动时创建 `AgentApprovalStateStore`，默认文件位于 `$OPENCLAW_STATE_DIR/device-manager/agent-approval-state.json`（未设置时为 `~/.openclaw/device-manager/agent-approval-state.json`）。待确认项重启后变为 `RECOVERY_REQUIRED`；执行窗口中断变为 `EXECUTION_UNCERTAIN`，都不会恢复旧批准或自动重放。持久化只保留最小计划/幂等摘要，不保存聊天原文、证据或凭据。
+- 2026-10-30 回归：设备管家 293/293、锁具认证适配器 8/8、审批计划 27/27、安装器 13/13、部署包检查 76 项通过。未部署外部可信认证服务，未连接真实 HA 或设备，也未重启用户 Gateway。
+- 本机此前生成 `output/deployment/LT-agent-program-deployment-v0.1.28.zip`（309 个文件）作为候选快照；它不是正式验收通过或发布版本，没有上传，也没有覆盖旧包。最初 Linux 检查虽为 11/11 阶段通过，但未安装目标 SDK，6 个 SDK 专属适配器测试被跳过。
+- 2026-10-30 对该候选快照补验：从 ZIP 解压到 Debian 12 / Node.js 24.22.1 临时目录后，Linux 验证阶段 11/11 通过，582 项单元测试和 11 项设备管家 Mock 验收均通过，0 跳过；设备管家和平台编排插件在 OpenClaw `2026.7.1-2` 下通过 `plugins validate`。隔离临时 Profile 的 Gateway 健康检查通过（17 ms），10 个插件已加载、无插件错误；Linux 安装器 `--plan-only` 通过并识别 `main` 主 Agent。未连接模型、真实 HA 或设备。
+- 该候选 ZIP 使用反斜杠路径。Debian `unzip 6.0` 能正确展开目录，候选代码从解压目录通过了上述测试，但 `unzip` 会发出路径警告并返回退出码 1；正式打包前应处理此兼容性问题。另对 OpenClaw `2026.7.1-2` 运行 `npm audit`，当前 registry 数据报告 15 个受影响依赖项（4 中危、10 高危、1 严重），包括严重级别的 `proxy-addr`；未运行自动修复，也未改变锁定的 OpenClaw 版本。运行时依赖安全处理仍待确认。
+- 已修正打包器源码：新增 `deployment/Package-Archive.ps1`，让 ZIP 条目统一使用 `/`，并为路径格式加入回归检查。`Test-DeploymentPackage.ps1 -InstallerChecks -InstallFlow` 95 项通过，包含临时 ZIP 嵌套目录与 Linux 路径测试。没有生成新版本 ZIP，因此现有 `v0.1.28` 候选包仍有原警告；需在其余验收项关闭后再重建并复验。
+- 2026-10-31 后续验收：更正 Docker Desktop 位于用户目录的安装路径后启动本机 Engine；已有 `lt-agent-program-linux-workspace` 容器显示为运行中，没有对该容器执行命令、复制文件或触碰 `/workspace`。通过无网络、自动移除的 Debian 12 / Node.js 24.22.1 容器，用只读挂载的临时 ZIP 验证 `Package-Archive.ps1` 输出：`unzip -t` 退出码 0，嵌套文件解压/读取成功；临时文件和容器已清理。这证明打包器路径修正，不是完整版本包验收。旧 `v0.1.28` 仍有 304 个反斜杠路径且缺少新打包器，仍不通过。
+- 同日从 npm registry 重新审计精确版本 `openclaw@2026.7.1-2`：15 项（1 严重、10 高危、4 中危）。隔离容器内尝试不带 `--force` 的 lockfile-only 修复未改变数量；npm 表示 `--force` 会升级到 `2026.10.9`。单独审计 `2026.10.9` 仍有 6 项（0 严重、4 高危、2 中危），所以该升级也不能得到零漏洞结果。没有运行强制升级，也未修改项目/实际 Gateway。运行时依赖安全项仍需风险处理决定。
+- 继续验收时对 `v0.1.28` 的 309 个文件与当前打包规则做了只读逐项比对：设备/能源/记忆/编排运行时代码和对应单元测试内容一致；差异是打包后加入的 ZIP 路径回归检查、验收记录更新、README 中构建时的命令路径替换及两个插件包的目标版本固定。旧包仅缺少新增的 `deployment/Package-Archive.ps1`，并且其 ZIP 条目仍使用反斜杠。当前工作区重新运行 `Test-DeploymentPackage.ps1 -InstallerChecks -InstallFlow`，95/95 通过。该结果确认既有 582 项 Debian 测试覆盖当前运行时代码，但不改变旧 ZIP 未通过 Linux 归档验收的结论。
+- 只读检查当前 Linux/PowerShell 安装器和部署说明，没有发现项目安装器设置 Gateway 的 `trustedProxies`、bind 或代理参数；这避免由本项目写入 GHSA 所述的短前缀 IPv4 映射 IPv6 信任网段，但不会检查或覆盖目标 OpenClaw Profile 中已有的代理配置，也不修复受影响依赖。部署方若自行启用反向代理，仍需按上游公告核对信任网段。
+
+## 2026-10-31 最终候选包验收
+
+- 用户明确接受 OpenClaw `2026.7.1-2` 依赖树的 15 项审计告警（1 严重、10 高危、4 中危）作为本次交付的已知风险。没有升级 OpenClaw、运行 `npm audit fix --force` 或修改目标版本依赖；风险接受不代表修复。
+- 最终包：`output/deployment/LT-agent-program-deployment-v0.1.31.zip`，310 个文件，SHA-256 `9C5A30EB038FDEF6DE7C07E1ADCEFAE08EAC6EDBB08CB3EB7B132278752766FD`。旧 `v0.1.28` 保留为历史候选，因 ZIP 反斜杠路径不再作为交付包使用。
+- Windows 部署/安装/ZIP 检查 `Test-DeploymentPackage.ps1 -InstallerChecks -InstallFlow -ArchivePath ...v0.1.31.zip`：123/123 通过。
+- Debian 12 / Node.js 24.22.1 整包验收：ZIP `unzip -tq` 通过；精确 CLI 为 OpenClaw `2026.7.1-2`；设备管家与平台编排插件均通过 `plugins validate`；`deployment/verify-agent-stack.mjs` 11/11 阶段通过，582 项单元测试、11 项设备管家 Mock 验收通过。依赖安装仍报告上述 15 项风险，按用户决定接受。
+- 本次仅用隔离 Mock 环境，没有连接 HA、真实设备或调用模型 API。该结果完成本地交付包验收，不替代接收方 Profile 配置复核和真实设备联调。
+
+## 2026-10-31 本地可完成项继续验收
+
+- 在专用 Ubuntu 24.04 Docker 容器与持久卷中，以非特权 `ltagent` 账户完成家庭记忆 SQLite 路径测试：状态目录 `0700`，数据库文件 `0600`；新备份/恢复库均 `0600`。增加了备份文件权限回归断言，Ubuntu 专项测试 6/6 通过；恢复后从数据库读回合成偏好，容器重建后仍可读回。旧的 `0644` 备份文件仅作修复前对照。
+- 当前代码与新交付包在 Ubuntu 隔离 OpenClaw Profile 中固定使用 `2026.7.1-2` 验证；仅启用 Mock 后端、loopback Gateway 和 SQLite 测试路径，不配置云模型、不连 HA/真实家电。记录插件加载、工具注册、SQLite 只读查询与正常停机结果。
+- 纠正早先失败的审计尝试：当时缺 lockfile，`npm audit` 返回 `ENOLOCK`，不能据此统计。随后在隔离目录生成临时 lockfile 并成功审计 `openclaw@2026.7.1-2`；截至本次 registry 数据为 17 项（1 严重、10 高危、6 中危），比同日稍早的 15 项多 `glob`、`minimatch` 两项。保持团队指定版本，没有运行自动修复或升级。
+- 最终候选交付包：`output/deployment/LT-agent-program-deployment-v0.1.33.zip`，310 个 ZIP 条目，SHA-256 `74368C9816718AEDEEE1D4DD5A69AAB00B5AE4497D94FD0F0526B35237B5E3F4`。Windows 部署包检查 123/123；Debian 12 / Node.js 24.22.1 和 Ubuntu 24.04 / Node.js 24.22.2 均通过 ZIP 检查、OpenClaw `2026.7.1-2` 固定 SDK 的两个插件 CLI 校验，以及 `deployment/verify-agent-stack.mjs` 11/11 阶段、582 项单元测试、11 项设备管家 Mock 验收。
+- 在隔离 Ubuntu Profile 中，OpenClaw Gateway 健康检查通过，`device-manager` 与 `platform-orchestrator` 均加载，插件错误 0；通过 Gateway `tools.invoke` 写入并读回合成 `comfort_temperature_c=22` 偏好。容器重启后仍可读回，目录权限 `0700`、SQLite 数据库 `0600`。SQLite 备份专项测试 6/6 通过，新备份和恢复库权限均 `0600`。Gateway 未连模型、HA 或真实设备。
+- 当前 registry 的精确版本审计结果为 17 项（1 严重、10 高危、6 中危）。固定版本按项目组要求保持 `2026.7.1-2`；没有运行 `npm audit fix` 或自动升级。此数值较早先同日 15 项的记录新增 `glob`、`minimatch`，是当前 registry 解析结果。
+- 隔离验收 Gateway 已正常关闭，临时 token 已删除。容器 `lt-agent-local-ubuntu24-validation-20261031` 已停止但保留；专用数据卷 `lt-agent-local-ubuntu24-validation-data-20261031` 保留，供后续继续验收。卷内只含合成测试记忆与验收文件。
+
+## 2026-10-31 交付收尾状态
+
+- 更正交付验收矩阵、交付包说明和快速开始文档中的依赖审计数量为当前记录的 17 项（1 严重、10 高危、6 中危）；沿用用户此前对固定 `2026.7.1-2` 的风险接受，不升级 OpenClaw、不修改依赖树。
+- 重新生成交付包 `output/deployment/LT-agent-program-deployment-v0.1.34.zip`，310 个 ZIP 条目，SHA-256 `4A71CA0BB13215AF09A4C52248F5A6CB1281DD36040123019944EE4529275BEC`。Windows 包归档静态验收 83/83 通过；功能代码沿用 v0.1.33 已通过的 Debian/Ubuntu 11 阶段、582 项单元测试与 11 项 Mock 验收。v0.1.34 更新了交付说明和风险记录。
+- 根 `.gitignore` 增加本机交付输出、Node 编译缓存、OpenClaw 工作区状态、USER 模板和未审核标注草稿排除规则。提交前对拟提交内容做了凭据格式筛查（0 项命中）和 `git diff --check`（通过）。输出包、A/B/C 实验原始结果和 `implement-stage/` 草稿未进入代码提交；这些本机材料仍保留。
+- 代码实现提交为 `f3aafa4`，交接状态提交为 `55c0938`；两项提交已推送到 `codex/linux-agent-stack-ci`。2026-10-31 已通过后台 API 创建 [PR #2](https://github.com/xxc0304/LT-agent-program/pull/2)，目标分支为 `main`，目前仍开放且未合并。`55c0938` 的 GitHub Actions Linux `verify` 检查通过（run `41201710600` 和 `41201227758`）；后续交接文档更正提交 `a467805` 的两项 Linux `verify` 检查也通过（run `41202136562` 和 `41202132424`）。本地交付包、实验原始结果和 `implement-stage/` 草稿未提交。

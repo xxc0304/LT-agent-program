@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { constants as fsConstants } from "node:fs";
 import { access, copyFile, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
@@ -10,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const REQUIRED_OPENCLAW_VERSION = "2026.7.1-2";
 export const PROJECT_AGENT_IDS = ["device-manager", "energy-saving", "learning-companion"];
 export const RESTRICTED_SESSION_TOOLS = ["sessions_list", "sessions_history", "sessions_send", "sessions_spawn"];
+const ENERGY_AGENT_ONLY_TOOLS = ["analyze_energy_usage", "forecast_energy_budget", "evaluate_energy_effect", "calculate_energy_optimization"];
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -210,9 +212,10 @@ function assertPluginPath({ commandRunner, openclawPath, pluginRows, pluginId, e
 }
 
 function parseConfigPath(output) {
-  const match = String(output).match(/(?:[A-Za-z]:[\\/]|\\\\|\/)[^\r\n"']*openclaw\.json/i);
+  const match = String(output).match(/(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\r\n"']*openclaw\.json/i);
   if (!match) throw new Error("Could not identify the active OpenClaw config file. No profile changes were made.");
-  return resolve(match[0].trim());
+  const reportedPath = match[0].trim().replace(/^~(?=[\\/])/, homedir());
+  return resolve(reportedPath);
 }
 
 function selectFrontdoorAgent(rows, requestedId) {
@@ -296,6 +299,7 @@ export async function runInstaller(options = {}) {
   const deviceManagerManifest = JSON.parse(await readFile(join(root, "device-manager/openclaw.plugin.json"), "utf8"));
   const pluginTools = (deviceManagerManifest.contracts?.tools ?? []).filter((tool) => typeof tool === "string");
   if (!pluginTools.includes("talk_to_device_manager")) throw new Error("The package plugin is missing talk_to_device_manager.");
+  const deviceManagerTools = pluginTools.filter((tool) => !ENERGY_AGENT_ONLY_TOOLS.includes(tool));
   const platformManifest = JSON.parse(await readFile(join(root, "multi-agent-orchestrator/openclaw.plugin.json"), "utf8"));
   const platformTool = (platformManifest.contracts?.tools ?? []).find((tool) => tool === "orchestrate_household_agents");
   if (!platformTool) throw new Error("The platform plugin is missing orchestrate_household_agents.");
@@ -486,8 +490,8 @@ export async function runInstaller(options = {}) {
 
     const policies = [
       { id: frontdoorId, allow: [platformTool], deny: ["talk_to_device_manager", ...pluginTools, ...RESTRICTED_SESSION_TOOLS] },
-      { id: "device-manager", allow: pluginTools, deny: ["sessions_list", "sessions_history", "sessions_spawn"] },
-      { id: "energy-saving", allow: [], deny: RESTRICTED_SESSION_TOOLS },
+      { id: "device-manager", allow: deviceManagerTools, deny: ["sessions_list", "sessions_history", "sessions_spawn", ...ENERGY_AGENT_ONLY_TOOLS] },
+      { id: "energy-saving", allow: ["plan_energy_optimization", "calculate_energy_optimization", "forecast_energy_budget", "analyze_energy_usage", "evaluate_energy_effect"], deny: RESTRICTED_SESSION_TOOLS },
       { id: "learning-companion", allow: [], deny: RESTRICTED_SESSION_TOOLS },
     ];
     for (const policy of policies) {
@@ -526,7 +530,16 @@ export async function runInstaller(options = {}) {
 
     if (!options.skipMockVerification) {
       const verifyEnv = { ...(options.env ?? process.env), DEVICE_MANAGER_BACKEND: "mock" };
-      for (const name of ["HA_URL", "HA_TOKEN", "HA_ENTITY_ALLOWLIST", "HA_CONFIRMATION_REQUIRED_ENTITIES"]) delete verifyEnv[name];
+      for (const name of [
+        "HA_URL",
+        "HA_TOKEN",
+        "HA_ENTITY_ALLOWLIST",
+        "HA_CONFIRMATION_REQUIRED_ENTITIES",
+        "DEVICE_MANAGER_LOCK_AUTH_URL",
+        "DEVICE_MANAGER_LOCK_AUTH_PUBLIC_KEY",
+        "DEVICE_MANAGER_LOCK_AUTH_ISSUER",
+        "DEVICE_MANAGER_LOCK_AUTH_AUDIENCE",
+      ]) delete verifyEnv[name];
       runChecked(commandRunner, process.execPath, ["deployment/verify-agent-stack.mjs"], "Running local/Mock verification", { cwd: root, env: verifyEnv });
       mockVerification = "passed";
     }

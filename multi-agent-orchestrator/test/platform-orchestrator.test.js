@@ -23,8 +23,11 @@ function makeRegistry(overrides = {}) {
   const registry = new PlatformAgentRegistry();
   registry.registerAgent({
     agent_id: "energy-saving",
-    name: "节能 Agent",
-    capabilities: [{ name: "evaluate_energy", effect: "planning" }],
+    name: "能源管家",
+    capabilities: [
+      { name: "evaluate_energy", effect: "planning" },
+      { name: "forecast_energy_budget", effect: "read_only" },
+    ],
     invoke: overrides.energy ?? (async () => agentReply("energy-saving", "NO_ACTION", { result: { reason: "无节能机会" } })),
   });
   registry.registerAgent({
@@ -372,6 +375,181 @@ test("OpenClaw can ask a natural-language clarification without dispatching any 
   assert.equal(result.device_action_agent_invoked, false);
   assert.deepEqual(result.results, []);
   assert.equal(calls, 0);
+});
+
+test("a two-day budget forecast request can be clarified without dispatching the energy Agent", async () => {
+  let calls = 0;
+  const registry = makeRegistry({
+    energy: async () => { calls += 1; return agentReply("energy-saving", "COMPLETED", { result: {} }); },
+  });
+  const result = await createPlatformOrchestrator({ registry }).run({
+    request: "本月预算 100 度，目前只有 10 月 1 日 2 度、10 月 2 日 3 度，按现在的速度会不会超？",
+    plan: {
+      ...plan([]),
+      decision: "clarify",
+      question: "目前只有两天记录，还需要至少三个完整日并确认数据没有漏天。能补充第三天的用电量，并确认数据覆盖完整吗？",
+    },
+  });
+
+  assert.equal(result.status, "NEEDS_CLARIFICATION");
+  assert.equal(result.reason_code, "OPENCLAW_REQUESTED_CLARIFICATION");
+  assert.match(result.question, /至少三个完整日/);
+  assert.equal(result.agent_calls_performed, false);
+  assert.deepEqual(result.results, []);
+  assert.equal(calls, 0);
+});
+
+test("the dispatcher rejects a two-day budget forecast even if OpenClaw incorrectly proposes dispatch", async () => {
+  let calls = 0;
+  const registry = makeRegistry({
+    energy: async () => { calls += 1; return agentReply("energy-saving", "COMPLETED", { result: {} }); },
+  });
+  const result = await createPlatformOrchestrator({ registry }).run({
+    request: "按现在的速度会不会超预算？",
+    plan: plan([step("budget", "energy-saving", "forecast_energy_budget", {
+      input: {
+        budget_kwh: 100,
+        period_start: "2026-10-01",
+        period_end: "2026-10-31",
+        through_date: "2026-10-02",
+        daily_totals: [
+          { date: "2026-10-01", energy_kwh: 2 },
+          { date: "2026-10-02", energy_kwh: 3 },
+        ],
+        coverage_attested_complete: true,
+      },
+    })]),
+  });
+
+  assert.equal(result.status, "NEEDS_CLARIFICATION");
+  assert.equal(result.reason_code, "ENERGY_BUDGET_DATA_INCOMPLETE");
+  assert.match(result.question, /至少需要 3 个/);
+  assert.equal(result.agent_calls_performed, false);
+  assert.deepEqual(result.results, []);
+  assert.deepEqual(result.remaining_step_ids, ["budget"]);
+  assert.equal(calls, 0);
+});
+
+test("the dispatcher requires a completeness attestation and contiguous daily totals for budget forecasts", async (t) => {
+  const cases = [
+    {
+      name: "missing completeness attestation",
+      through_date: "2026-10-03",
+      daily_totals: [
+        { date: "2026-10-01", energy_kwh: 2 },
+        { date: "2026-10-02", energy_kwh: 3 },
+        { date: "2026-10-03", energy_kwh: 4 },
+      ],
+      coverage_attested_complete: false,
+      expectedQuestion: /确认这些数据覆盖完整/,
+    },
+    {
+      name: "gap in daily totals",
+      through_date: "2026-10-03",
+      daily_totals: [
+        { date: "2026-10-01", energy_kwh: 2 },
+        { date: "2026-10-03", energy_kwh: 4 },
+      ],
+      coverage_attested_complete: true,
+      expectedQuestion: /连续、无重复且没有漏天/,
+    },
+  ];
+
+  for (const testCase of cases) {
+    await t.test(testCase.name, async () => {
+      let calls = 0;
+      const registry = makeRegistry({
+        energy: async () => { calls += 1; return agentReply("energy-saving", "COMPLETED", { result: {} }); },
+      });
+      const result = await createPlatformOrchestrator({ registry }).run({
+        request: "估算本期预算进度。",
+        plan: plan([step("budget", "energy-saving", "forecast_energy_budget", {
+          input: {
+            budget_kwh: 100,
+            period_start: "2026-10-01",
+            period_end: "2026-10-31",
+            through_date: testCase.through_date,
+            daily_totals: testCase.daily_totals,
+            coverage_attested_complete: testCase.coverage_attested_complete,
+          },
+        })]),
+      });
+
+      assert.equal(result.status, "NEEDS_CLARIFICATION");
+      assert.equal(result.reason_code, "ENERGY_BUDGET_DATA_INCOMPLETE");
+      assert.match(result.question, testCase.expectedQuestion);
+      assert.equal(result.agent_calls_performed, false);
+      assert.deepEqual(result.results, []);
+      assert.equal(calls, 0);
+    });
+  }
+});
+
+test("the dispatcher allows a forecast when the structured data is complete", async () => {
+  const calls = [];
+  const registry = makeRegistry({
+    energy: async (call) => {
+      calls.push(call);
+      return agentReply("energy-saving", "COMPLETED", { result: { estimate: { projected_period_kwh: 93 } } });
+    },
+  });
+  const input = {
+    budget_kwh: 100,
+    period_start: "2026-10-01",
+    period_end: "2026-10-31",
+    through_date: "2026-10-03",
+    daily_totals: [
+      { date: "2026-10-01", energy_kwh: 2 },
+      { date: "2026-10-02", energy_kwh: 3 },
+      { date: "2026-10-03", energy_kwh: 4 },
+    ],
+    coverage_attested_complete: true,
+  };
+  const result = await createPlatformOrchestrator({ registry }).run({
+    request: "按完整用电数据估算预算进度。",
+    plan: plan([step("budget", "energy-saving", "forecast_energy_budget", { input })]),
+  });
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(result.agent_calls_performed, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].capability, "forecast_energy_budget");
+  assert.deepEqual(calls[0].input, input);
+});
+
+test("the dispatcher normalizes daily kwh aliases to the energy tool's canonical field", async () => {
+  const calls = [];
+  const registry = makeRegistry({
+    energy: async (call) => {
+      calls.push(call);
+      return agentReply("energy-saving", "COMPLETED", { result: { estimate: { projected_period_kwh: 93 } } });
+    },
+  });
+  const result = await createPlatformOrchestrator({ registry }).run({
+    request: "按三天完整记录估算预算。",
+    plan: plan([step("budget", "energy-saving", "forecast_energy_budget", {
+      input: {
+        budget_kwh: 100,
+        period_start: "2026-10-01",
+        period_end: "2026-10-31",
+        through_date: "2026-10-03",
+        daily_totals: [
+          { date: "2026-10-01", kwh: 2 },
+          { date: "2026-10-02", kwh: 3 },
+          { date: "2026-10-03", kwh: 4 },
+        ],
+        coverage_attested_complete: true,
+      },
+    })]),
+  });
+
+  assert.equal(result.status, "COMPLETED");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].input.daily_totals, [
+    { date: "2026-10-01", energy_kwh: 2 },
+    { date: "2026-10-02", energy_kwh: 3 },
+    { date: "2026-10-03", energy_kwh: 4 },
+  ]);
 });
 
 test("OpenClaw can report an unsupported request without dispatching any Agent", async () => {
