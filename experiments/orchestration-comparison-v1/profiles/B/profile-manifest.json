@@ -1,0 +1,14 @@
+{
+  "strategy": "B",
+  "title": "Project structured plan plus validator and dispatcher",
+  "status": "template_requires_plugin_install_and_openclaw_dry_run",
+  "frontdoor_agent_id": "dev",
+  "agent_ids": ["dev", "device-manager", "security-review-fixture", "energy-saving", "learning-companion"],
+  "required_plugin": "platform-orchestrator",
+  "required_plugin_config": {"frontdoorAgentId": "dev", "additionalAgents": ["security-review-fixture"]},
+  "required_tool": "orchestrate_household_agents",
+  "device_action_policy": "fixture_dry_run_only",
+  "forbidden": ["real_home_assistant_credentials", "real_device_write_tools"],
+  "shared_model": "same_model_and_parameters_as_A_and_C; configure outside repository",
+  "note": "security-review-fixture is an experiment fixture, not a production registered project Agent"
+}

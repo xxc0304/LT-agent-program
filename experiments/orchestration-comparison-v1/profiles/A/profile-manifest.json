@@ -1,0 +1,12 @@
+{
+  "strategy": "A",
+  "title": "Teacher AGENTS.md direct domain routing",
+  "status": "teacher_route_source_reviewed_template_requires_openclaw_dry_run",
+  "frontdoor_agent_id": "dev",
+  "agent_ids": ["dev", "device-steward", "security-guard"],
+  "routing_semantics": "direct_sessions_send_by_teacher_domain_rules",
+  "required_tools": ["sessions_send", "fixture_device_query", "fixture_device_action_dry_run"],
+  "forbidden": ["real_home_assistant_credentials", "real_device_write_tools", "energy_or_learning_routes_not_in_teacher_rules"],
+  "shared_model": "same_model_and_parameters_as_B_and_C; configure outside repository",
+  "source_rule_file": "teacher-supplied agents(1).md; route rules summarized in AGENTS.md; retain source for line-by-line review"
+}

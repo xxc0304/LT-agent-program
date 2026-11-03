@@ -1,0 +1,28 @@
+{
+  "agents": {
+    "defaults": {"model": {"primary": "deepseek/deepseek-v4-flash"}},
+    "list": [
+      {"id": "dev", "default": true, "workspace": "__EXP_ROOT__/profiles/A/workspaces/dev", "tools": {"allow": ["sessions_send"]}},
+      {"id": "device-steward", "workspace": "__EXP_ROOT__/fixtures/workspaces/device_steward", "tools": {"allow": []}},
+      {"id": "security-guard", "workspace": "__EXP_ROOT__/fixtures/workspaces/safety_review", "tools": {"allow": []}}
+    ]
+  },
+  "tools": {
+    "profile": "minimal",
+    "alsoAllow": ["sessions_send"],
+    "agentToAgent": {"enabled": true, "allow": ["dev", "device-steward", "security-guard"]},
+    "sessions": {"visibility": "all"}
+  },
+  "secrets": {
+    "providers": {
+      "default": {"source": "env", "allowlist": ["DEEPSEEK_API_KEY"]}
+    }
+  },
+  "models": {
+    "providers": {
+      "deepseek": {
+        "apiKey": {"source": "env", "provider": "default", "id": "DEEPSEEK_API_KEY"}
+      }
+    }
+  }
+}

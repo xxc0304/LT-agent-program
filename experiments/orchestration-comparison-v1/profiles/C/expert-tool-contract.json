@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "status": "prototype_plugin_implemented_locally;_openclaw_profile_dry_run_and_gateway_validation_pending",
+  "manager_agent_id": "dev",
+  "conversation_owner": "dev",
+  "tool_call_semantics": "Each call sends one bounded task to one expert, waits for a structured response, and returns control to dev. Independent read-only calls may run concurrently; dependent calls must wait for their prerequisite result.",
+  "common_input": {
+    "request": "string",
+    "scenario_id": "string",
+    "synthetic_context": "object",
+    "constraints": ["dry_run_only", "no_real_ha", "no_device_writes"]
+  },
+  "tools": [
+    {"name": "call_device_specialist", "logical_agent_id": "device_steward", "capability": "inspect_household"},
+    {"name": "call_safety_review", "logical_agent_id": "safety_review", "capability": "review_safety"},
+    {"name": "call_energy_specialist", "logical_agent_id": "energy_manager", "capability": "analyze_energy"},
+    {"name": "call_learning_specialist", "logical_agent_id": "learning_companion", "capability": "analyze_learning_event"}
+  ],
+  "shared_result_fields": ["status", "facts_or_recommendation", "reasons", "device_write_attempted", "trace_id"],
+  "safety": {
+    "tool_bridge_must_reject_real_device_write_tools": true,
+    "tool_bridge_must_not_return_success_when_specialist_call_failed": true,
+    "tool_bridge_must_preserve_specialist_identity_and_trace_id": true
+  }
+}

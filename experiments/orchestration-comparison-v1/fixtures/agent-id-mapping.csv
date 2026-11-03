@@ -1,0 +1,13 @@
+strategy,logical_agent_id,configured_agent_id,implementation_kind,scope,note
+A,device_steward,device-steward,teacher_agent,common_core,Teacher naming preserved from supplied AGENTS.md
+A,safety_review,security-guard,teacher_agent,common_core,Teacher naming preserved; use same synthetic safety fixture semantics
+A,energy_manager,,not_defined,extension_coverage,Do not invent an A-group route absent from teacher instructions
+A,learning_companion,,not_defined,extension_coverage,Do not invent an A-group route absent from teacher instructions
+B,device_steward,device-manager,project_agent,common_core,Project platform agent; normalize to logical device_steward role
+B,safety_review,safety-review-fixture,test_fixture,common_core,Test fixture only; not a registered production security Agent
+B,energy_manager,energy-saving,project_agent,extension_coverage,Existing project platform ID; display name is 能源管家
+B,learning_companion,learning-companion,project_agent,extension_coverage,Existing project platform ID
+C,device_steward,device-specialist-tool,agent_as_tool,common_core,Logical expert tool name for isolated manager-style profile
+C,safety_review,safety-review-tool,test_fixture,common_core,Test fixture only; not a registered production security Agent
+C,energy_manager,energy-specialist-tool,agent_as_tool,extension_coverage,Use the same synthetic expert role and output contract
+C,learning_companion,learning-specialist-tool,agent_as_tool,extension_coverage,Use the same synthetic expert role and output contract
