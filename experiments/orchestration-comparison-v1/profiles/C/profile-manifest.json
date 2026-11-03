@@ -1,0 +1,13 @@
+{
+  "strategy": "C",
+  "title": "Manager-style agent-as-tools reference",
+  "status": "manager_agent_tools_prototype_ready_requires_openclaw_profile_dry_run",
+  "frontdoor_agent_id": "dev",
+  "agent_ids": ["dev", "device-specialist-tool", "safety-review-tool", "energy-specialist-tool", "learning-specialist-tool"],
+  "required_tool_interface": "one callable specialist tool per logical expert with structured request/result",
+  "required_plugin": "manager-agent-tools",
+  "device_action_policy": "fixture_dry_run_only",
+  "forbidden": ["real_home_assistant_credentials", "real_device_write_tools", "project_B_explicit_DAG_validator"],
+  "shared_model": "same_model_and_parameters_as_A_and_B; configure outside repository",
+  "note": "Prototype loads tools only on dev. Confirm plugin loading, tool visibility, session policy and structured result handoff in the isolated target Gateway before model runs."
+}

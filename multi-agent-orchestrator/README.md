@@ -4,6 +4,8 @@
 
 ## 当前链路
 
+近期进度、编排架构候选、首轮证据复核和后续实验计划见 [`docs/project-progress-2026-11-03.md`](../docs/project-progress-2026-11-03.md)、[`docs/multi-agent-orchestration-decision-v1.md`](../docs/multi-agent-orchestration-decision-v1.md) 和 [`docs/multi-agent-orchestration-research-review-2026-11-03.md`](../docs/multi-agent-orchestration-research-review-2026-11-03.md)。目前尚未通过完整对照实验选出方案；平台编排器是正在验证的候选之一，不应把现有代码实现等同于架构优胜结论。
+
 ```text
 learning-companion 学习伴学 Agent
         ↓ learning_behavior Event
@@ -34,7 +36,7 @@ Mock Home Assistant
 ## 运行
 
 ```powershell
-Set-Location C:\Users\QVQ\Documents\ChatGPT\LT-agent-program\multi-agent-orchestrator
+Set-Location <repository-root>\multi-agent-orchestrator
 npm test
 npm run demo
 npm run demo:scene-review

@@ -1,0 +1,54 @@
+{
+  "id": "manager-agent-tools",
+  "name": "Orchestration Comparison Manager Agent Tools",
+  "description": "Provides callable expert tools for experiment strategy C; it does not generate a DAG or perform plan validation.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "frontdoorAgentId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "targets": {
+        "type": "object",
+        "properties": {
+          "device_steward": {
+            "type": "string",
+            "minLength": 1
+          },
+          "safety_review": {
+            "type": "string",
+            "minLength": 1
+          },
+          "energy_manager": {
+            "type": "string",
+            "minLength": 1
+          },
+          "learning_companion": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 120000
+      }
+    },
+    "additionalProperties": false
+  },
+  "contracts": {
+    "tools": [
+      "call_device_specialist",
+      "call_safety_review",
+      "call_energy_specialist",
+      "call_learning_specialist"
+    ]
+  }
+}

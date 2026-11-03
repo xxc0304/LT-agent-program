@@ -1,0 +1,22 @@
+{
+  "name": "orchestration-comparison-manager-tools",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Isolated C-strategy manager-to-expert tool bridge for the orchestration comparison experiment",
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1-2"
+  },
+  "dependencies": {
+    "typebox": "^1.1.38"
+  },
+  "openclaw": {
+    "extensions": [
+      "./src/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1-2",
+      "minGatewayVersion": ">=2026.7.1-2"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "purpose": "Shared synthetic agent fixtures for orchestration comparison; these definitions do not imply that every agent is registered in the project or teacher Gateway.",
+  "device_action_policy": {
+    "mode": "dry_run_only",
+    "real_home_assistant_write_tools": false,
+    "record_attempted_actions": true,
+    "record_executed_actions": false
+  },
+  "agents": [
+    {
+      "logical_agent_id": "device_steward",
+      "display_name": "设备管家 fixture",
+      "track": "common_core",
+      "capabilities": ["device_state_query", "device_inventory_lookup", "action_intent_dry_run"],
+      "input_contract": {"request": "string", "synthetic_context": "object", "constraints": "array"},
+      "output_contract": {"status": ["COMPLETED", "PROPOSED", "NEEDS_CLARIFICATION", "BLOCKED", "FAILED"], "source_agent": "must echo target_agent", "trace_id": "must echo request trace_id", "result": "object", "summary": "string", "question": "required for clarification", "device_write_attempted": "boolean"},
+      "safety_note": "Never call a real device write tool; report any attempted action in the structured result."
+    },
+    {
+      "logical_agent_id": "safety_review",
+      "display_name": "安全评估 fixture",
+      "track": "common_core",
+      "capabilities": ["presence_evidence_review", "conflict_detection", "sensitive_action_review", "uncertainty_review"],
+      "input_contract": {"request": "string", "synthetic_context": "object", "proposed_steps": "array"},
+      "output_contract": {"status": ["COMPLETED", "NEEDS_CLARIFICATION", "CONFLICT", "BLOCKED", "FAILED"], "source_agent": "must echo target_agent", "trace_id": "must echo request trace_id", "result": "object", "summary": "string", "question": "required for clarification or conflict", "device_write_attempted": "boolean"},
+      "project_status_note": "Test fixture only; the project does not currently register this as a production security Agent."
+    },
+    {
+      "logical_agent_id": "energy_manager",
+      "display_name": "能源管家 fixture",
+      "track": "extension_coverage",
+      "capabilities": ["energy_estimation", "tariff_window_analysis", "energy_plan_without_execution"],
+      "input_contract": {"request": "string", "device_facts": "object", "tariff": "object"},
+      "output_contract": {"status": ["COMPLETED", "PROPOSED", "NEEDS_CLARIFICATION", "BLOCKED", "FAILED"], "source_agent": "must echo target_agent", "trace_id": "must echo request trace_id", "result": "object", "summary": "string", "question": "required for clarification", "device_write_attempted": "boolean"},
+      "safety_note": "Use only supplied synthetic measurements and report missing inputs rather than estimating them."
+    },
+    {
+      "logical_agent_id": "learning_companion",
+      "display_name": "学习伴学 Agent fixture",
+      "track": "extension_coverage",
+      "capabilities": ["event_normalization", "learning_context_summary"],
+      "input_contract": {"request": "string", "synthetic_context": "object"},
+      "output_contract": {"status": ["COMPLETED", "PROPOSED", "NEEDS_CLARIFICATION", "BLOCKED", "FAILED"], "source_agent": "must echo target_agent", "trace_id": "must echo request trace_id", "result": "object", "summary": "string", "question": "required for clarification", "device_write_attempted": "boolean"},
+      "safety_note": "Normalize only supplied synthetic learning events; do not infer device state."
+    }
+  ]
+}

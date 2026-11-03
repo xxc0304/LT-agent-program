@@ -1,0 +1,53 @@
+{
+  "agents": {
+    "defaults": {"model": {"primary": "deepseek/deepseek-v4-flash"}},
+    "list": [
+      {"id": "dev", "default": true, "workspace": "__EXP_ROOT__/profiles/B/workspaces/dev", "tools": {"allow": ["orchestrate_household_agents"]}},
+      {"id": "device-manager", "workspace": "__EXP_ROOT__/fixtures/workspaces/device_steward", "tools": {"allow": []}},
+      {"id": "security-review-fixture", "workspace": "__EXP_ROOT__/fixtures/workspaces/safety_review", "tools": {"allow": []}},
+      {"id": "energy-saving", "workspace": "__EXP_ROOT__/fixtures/workspaces/energy_manager", "tools": {"allow": []}},
+      {"id": "learning-companion", "workspace": "__EXP_ROOT__/fixtures/workspaces/learning_companion", "tools": {"allow": []}}
+    ]
+  },
+  "tools": {
+    "profile": "minimal",
+    "alsoAllow": ["orchestrate_household_agents"],
+    "agentToAgent": {"enabled": true, "allow": ["dev", "device-manager", "security-review-fixture", "energy-saving", "learning-companion"]},
+    "sessions": {"visibility": "all"}
+  },
+  "plugins": {
+    "entries": {
+      "platform-orchestrator": {
+        "enabled": true,
+        "config": {
+          "frontdoorAgentId": "dev",
+          "additionalAgents": [
+            {
+              "agent_id": "security-review-fixture",
+              "name": "安全评估 fixture",
+              "description": "实验用只读安全评估角色，不是已登记的生产 Agent",
+              "capabilities": [
+                {"name": "review_presence_evidence", "description": "审查人员状态证据的新鲜度和可信度", "effect": "read_only"},
+                {"name": "detect_instruction_conflict", "description": "识别相互矛盾的家庭设备指令", "effect": "read_only"},
+                {"name": "review_sensitive_action_authorization", "description": "审查门锁等敏感动作的身份验证与授权要求", "effect": "read_only"},
+                {"name": "assess_event_uncertainty", "description": "审查事件来源、可信度与时效性", "effect": "read_only"}
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "secrets": {
+    "providers": {
+      "default": {"source": "env", "allowlist": ["DEEPSEEK_API_KEY"]}
+    }
+  },
+  "models": {
+    "providers": {
+      "deepseek": {
+        "apiKey": {"source": "env", "provider": "default", "id": "DEEPSEEK_API_KEY"}
+      }
+    }
+  }
+}
