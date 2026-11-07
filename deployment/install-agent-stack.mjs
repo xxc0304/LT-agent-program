@@ -2,18 +2,25 @@
 
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import { access, copyFile, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const REQUIRED_OPENCLAW_VERSION = "2026.7.1-2";
+const deploymentDirectory = dirname(fileURLToPath(import.meta.url));
+const openClawCompatibility = JSON.parse(readFileSync(join(deploymentDirectory, "openclaw-compatibility.json"), "utf8"));
+if (typeof openClawCompatibility.requiredVersion !== "string"
+  || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(openClawCompatibility.requiredVersion)) {
+  throw new Error("deployment/openclaw-compatibility.json must declare a valid requiredVersion.");
+}
+
+export const REQUIRED_OPENCLAW_VERSION = openClawCompatibility.requiredVersion;
 export const PROJECT_AGENT_IDS = ["device-manager", "energy-saving", "learning-companion"];
 export const RESTRICTED_SESSION_TOOLS = ["sessions_list", "sessions_history", "sessions_send", "sessions_spawn"];
 const ENERGY_AGENT_ONLY_TOOLS = ["analyze_energy_usage", "forecast_energy_budget", "evaluate_energy_effect", "calculate_energy_optimization"];
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(deploymentDirectory, "..");
 
 function parseArgs(argv) {
   const options = {

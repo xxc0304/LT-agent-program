@@ -10,7 +10,17 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$requiredOpenClawVersion = '2026.7.1-2'
+$compatibilityManifestPath = Join-Path $PSScriptRoot 'openclaw-compatibility.json'
+try {
+    $openClawCompatibility = Get-Content -LiteralPath $compatibilityManifestPath -Raw | ConvertFrom-Json -ErrorAction Stop
+}
+catch {
+    throw 'Could not read deployment/openclaw-compatibility.json; no profile changes were made.'
+}
+$requiredOpenClawVersion = [string]$openClawCompatibility.requiredVersion
+if ($requiredOpenClawVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+    throw 'deployment/openclaw-compatibility.json must declare a valid requiredVersion; no profile changes were made.'
+}
 $projectAgentIds = @('device-manager', 'energy-saving', 'learning-companion')
 $restrictedSessionTools = @('sessions_list', 'sessions_history', 'sessions_send', 'sessions_spawn')
 $repoRoot = Split-Path -Parent $PSScriptRoot

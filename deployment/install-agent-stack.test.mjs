@@ -5,13 +5,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { comparablePath, runInstaller } from "./install-agent-stack.mjs";
+import { comparablePath, REQUIRED_OPENCLAW_VERSION, runInstaller } from "./install-agent-stack.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
 test("path identity follows filesystem case rules for Linux and Windows", () => {
   assert.notEqual(comparablePath("/srv/OpenClaw/plugins"), comparablePath("/srv/openclaw/plugins"));
   assert.equal(comparablePath("C:\\OpenClaw\\plugins"), comparablePath("c:/openclaw/PLUGINS/"));
+});
+
+test("OpenClaw compatibility target stays aligned across installers, plugins, and Ubuntu CI", async () => {
+  const compatibility = JSON.parse(await readFile(join(packageRoot, "deployment/openclaw-compatibility.json"), "utf8"));
+  assert.equal(REQUIRED_OPENCLAW_VERSION, compatibility.requiredVersion);
+
+  for (const packagePath of ["device-manager/package.json", "multi-agent-orchestrator/package.json"]) {
+    const packageJson = JSON.parse(await readFile(join(packageRoot, packagePath), "utf8"));
+    assert.equal(packageJson.openclaw.build.openclawVersion, compatibility.requiredVersion, `${packagePath} OpenClaw build target`);
+    assert.equal(packageJson.openclaw.build.pluginSdkVersion, compatibility.requiredVersion, `${packagePath} SDK target`);
+    assert.equal(packageJson.peerDependencies.openclaw, packageJson.openclaw.compat.pluginApi, `${packagePath} plugin API range`);
+  }
+
+  const powershellInstaller = await readFile(join(packageRoot, "deployment/Install-Agent-Stack.ps1"), "utf8");
+  assert.match(powershellInstaller, /Join-Path\s+\$PSScriptRoot\s+'openclaw-compatibility\.json'/i);
+  assert.doesNotMatch(powershellInstaller, /\$requiredOpenClawVersion\s*=\s*['"]\d/);
+
+  const workflow = await readFile(join(packageRoot, ".github/workflows/agent-stack.yml"), "utf8");
+  assert.ok(workflow.includes(`openclaw@${compatibility.requiredVersion}`));
 });
 
 async function withProfile(run) {
