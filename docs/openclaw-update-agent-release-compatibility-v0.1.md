@@ -32,7 +32,7 @@
 
 本次验证：`node --test deployment/install-agent-stack.test.mjs` 为 **15/15 通过**，包括默认未设置显示 default-off、读取状态失败时拒绝计划、自动更新开启时在用户确认/备份/安装/配置修改前阻断，以及两个项目插件使用 `--link` 并指向预期仓库路径；PowerShell 脚本解析通过，Node 两个文件语法检查通过，`git diff --check` 通过。测试使用模拟 OpenClaw CLI 和临时 profile，没有访问真实 Gateway。`.github/workflows/agent-stack.yml` 现已增加 Ubuntu 24.04 / Node.js 24 步骤运行这组测试，但代码尚未推送，故该 Linux job 仍未实际执行；PowerShell 仍只做语法检查，当前设备的 Gateway 配置也未读取。
 
-**GitHub 状态复核（2026-11-07）：** `main` 仍为 `6aebd5d`，最近一次成功的 Linux Agent stack workflow 是运行 #21，基于该旧提交；GitHub 上的 [workflow 文件](https://github.com/xxc0304/LT-agent-program/blob/main/.github/workflows/agent-stack.yml)尚无本地新增的安装器更新协调测试步骤。因此该成功记录不能证明本工作树的修改通过 Ubuntu 验证。当前工作树还包含 Task 2 的未提交改动，不能为触发 CI 而直接推送或合并；需先在受控分支审阅并纳入这些改动，再由 Ubuntu 24.04 / Node.js 24 workflow 验证。最近一次成功运行记录：[run #21](https://github.com/xxc0304/LT-agent-program/actions/runs/41656731003)。
+**GitHub 状态复核（2026-11-07）：** `main` 仍为 `6aebd5d`。已把 Task 2、Task 3 和 CI 改动分别提交到 `codex/task3-openclaw-update-guard`，未合并到 `main`。初次 Ubuntu 验证 [run #22](https://github.com/xxc0304/LT-agent-program/actions/runs/42373469770) 暴露了 Task 2 SQLite 备份目录按默认 umask 创建为 `0755` 的问题；修复提交 `d1833cf` 改为通过私有 SQLite 路径 helper 创建 `0700` 目录并拒绝不私有的已有目录。修复后的 [run #23](https://github.com/xxc0304/LT-agent-program/actions/runs/42373848885) 在 Ubuntu 24.04 / Node.js 24 全部通过：安装器门禁 15/15、Profile 同步专项 17/17、完整 Linux 本地/Mock 验证 11/11（家庭记忆 81/81）。这不代表真实 Gateway 配置、OpenClaw 自动更新交互或 Secret Service 密钥库已在目标机验证；后两项仍需相应的 Gateway/登录桌面环境。
 
 ## OpenClaw 更新行为与版本边界
 

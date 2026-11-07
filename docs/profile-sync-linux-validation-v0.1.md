@@ -43,3 +43,9 @@ secret-tool clear application lt-agent-program-profile-sync-smoke purpose profil
 ## 3. 结果边界
 
 记录 Node 版本、上述测试通过/跳过数量、端到端状态、Secret Service smoke 状态及是否出现密钥库提示。不要记录或发送任何密钥值。测试全部通过也只证明 Ubuntu 本机的合成原型行为，不证明真实身份、同意服务、云端 API、部署或恢复流程已完成。
+
+## 4. 本轮 Ubuntu CI 执行记录
+
+2026-11-07，GitHub Actions 在 Ubuntu 24.04 / Node.js 24 上运行 [workflow #23](https://github.com/xxc0304/LT-agent-program/actions/runs/42373848885)，提交 `d1833cf`：Profile 同步专项测试 **17/17 通过、0 跳过**；其中 POSIX SQLite 权限/链接用例在 Linux 上实际执行；本地端到端原型输出 `status: passed`，未使用真实网络或监听端口。完整 Linux 本地/Mock workflow **11/11 检查通过**，家庭记忆套件 **81/81 通过**。
+
+初次运行 [workflow #22](https://github.com/xxc0304/LT-agent-program/actions/runs/42373469770) 曾因 SQLite 备份函数创建的输出目录受系统 `umask` 影响而失败。修复后，备份及恢复目标目录通过私有路径 helper 创建并验证为 `0700`；另外增加了拒绝群组/其他用户可访问的已有输出目录的 Linux 回归用例。GitHub Actions 不运行需要登录桌面密钥库的 Secret Service smoke，因此该项仍须在已登录且密钥库已解锁的 Ubuntu 桌面会话按上方步骤单独验证。
