@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:lt-agent-program:profile-consent-change:0.1",
+  "title": "Profile consent change request",
+  "description": "Proposed v0.1 grant/revoke envelope. The owner is derived from the verified bearer principal and is never accepted in the request body.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "change_id",
+    "operation",
+    "permission",
+    "purpose",
+    "sharing_scope",
+    "expected_revision",
+    "changed_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1" },
+    "change_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable idempotency key reused with the exact request body on retries."
+    },
+    "operation": { "enum": ["grant", "revoke"] },
+    "permission": { "enum": ["profile:read", "profile:write"] },
+    "purpose": { "enum": ["preference_sync", "agent_task"] },
+    "sharing_scope": {
+      "enum": ["personal", "household"],
+      "description": "Household membership and write role must be checked by the service; this field does not grant membership."
+    },
+    "preference_type": {
+      "enum": ["comfort_temperature_c", "comfort_brightness_pct", "sleep_time", "wake_time"],
+      "description": "Required for task-scoped reads; omitted for explicit whole-scope device synchronization."
+    },
+    "expected_revision": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optimistic concurrency for this permission/purpose/scope key; zero means no consent record exists."
+    },
+    "changed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Client diagnostic timestamp only; it is not used to resolve conflicts."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "purpose": { "const": "preference_sync" } } },
+      "then": { "not": { "required": ["preference_type"] } }
+    },
+    {
+      "if": { "properties": { "purpose": { "const": "agent_task" } } },
+      "then": {
+        "properties": { "permission": { "const": "profile:read" } },
+        "required": ["preference_type"]
+      }
+    }
+  ]
+}

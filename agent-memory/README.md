@@ -11,7 +11,22 @@
 - 支持查询（精确房间/日期范围优先，随后回退到通用偏好）、列出、删除和过期清理。
 - JSON 兼容后端仍是默认值，以免旧安装在更新后切换到空数据库。OpenClaw 部署优先在设备管家插件配置中设置 `memoryBackend: "sqlite"` 和可选的绝对路径 `memoryDatabasePath`；交付包安装器可用 `-EnableSQLiteMemory` 显式启用，默认路径为活动 OpenClaw 配置文件旁的 `device-manager/family-memory.sqlite`。没有插件级设置时仍支持旧的 `FAMILY_MEMORY_BACKEND=sqlite` / `FAMILY_MEMORY_DB_PATH` 环境变量；插件级设置优先于环境变量。未配置数据库路径时，代码优先使用 `OPENCLAW_STATE_DIR/device-manager/family-memory.sqlite`，否则使用系统应用数据目录。家庭部署建议每户一个数据库并把它放在 Gateway/边缘节点的持久化状态区；该初版不支持一个数据库承载多个家庭。
 - SQLite 后端使用 Node 内置 `node:sqlite`，该后端需要 Node.js 22.5 或更高版本；不需额外安装数据库服务或第三方包。数据按记忆行和元数据表持久化，通过事务处理更新，OpenClaw 工具仍调用同一 `PreferenceMemoryStore` API。现有记忆 JSON 不会自动迁移；需显式导入：`npm run db:import-json -- <现有记忆.json> [新 SQLite 数据库路径]`。导入只允许写入未初始化的空数据库，源 JSON 不会被删除或修改。
-- 标准 SQLite 数据库和 JSON 文件都没有应用层加密。Linux/macOS 创建的数据库文件限制为当前用户权限；Windows 仍需在目标 Gateway 上核验 ACL，并保护持久化数据区。SQLite 的一致性事务和锁由数据库负责；不要把数据库放进 Git、CtxHop、普通网盘或网络共享目录。
+- 标准 SQLite 数据库和 JSON 文件都没有应用层加密。POSIX 下 SQLite 数据库目录必须由当前用户拥有且为 0700，数据库文件为 0600；符号链接、硬链接和权限过宽的目录会被拒绝，WAL/SHM sidecar 由私有目录隔离。Windows 仍由用户 ACL 保护持久化数据区。SQLite 的一致性事务和锁由数据库负责；不要把数据库放进 Git、CtxHop、普通网盘或网络共享目录。
+- Profile 同步的密钥入口 `src/profile-sync-key-provider.js` 按平台选择 Windows 当前用户 DPAPI 或 Linux Secret Service；Linux 依赖 `secret-tool` 和当前登录会话，解锁密钥库时可能出现系统提示，适配器会超时且不会等待或绕过提示。入口对 outbox 与客户端缓存分别派生密钥，二者可复用同一回调，不会直接共用 AES 密钥。没有明文文件或环境变量回退；当前用户会话、OS 密钥库不可用时失败关闭。无登录会话运行的 Linux 后台服务可能无法访问 Secret Service，需在目标主机验证。
+
+  Ubuntu 验证命令与密钥库副作用说明见 [`../docs/profile-sync-linux-validation-v0.1.md`](../docs/profile-sync-linux-validation-v0.1.md)。Secret Service smoke check 使用独立测试命名空间，和正式应用密钥分开。
+
+  ```js
+  import { createProfileSyncKeyProvider } from "./src/profile-sync-key-provider.js";
+  import { createProfileSyncOutbox } from "./src/profile-sync-outbox.js";
+  import { createEncryptedProfileSyncClientCache } from "./src/profile-sync-client-cache-sqlite.js";
+
+  const getEncryptionKey = createProfileSyncKeyProvider();
+  const outbox = await createProfileSyncOutbox({ databasePath: outboxPath, principalBinding, getEncryptionKey });
+  const cache = await createEncryptedProfileSyncClientCache({ databasePath: cachePath, principalBinding, getEncryptionKey, isConsentCurrent });
+  ```
+
+  该适配仍未在 Linux/Docker 运行验证；密钥轮换和恢复流程也尚未定义。
 - 现有 `backup` 命令加密备份的是 JSON 文件，不应拿它备份 SQLite 数据库。SQLite 现已提供人工触发的一致性备份/恢复命令：`npm run db:backup -- create <当前记忆.sqlite> <新建备份.sqlite>` 和 `npm run db:backup -- restore <备份.sqlite> <新建恢复库.sqlite>`；仅创建新文件，不覆盖，不改动 Gateway 当前配置。该命令需要 Node.js 22.16+，且产生的 SQLite 文件未加密；自动备份/保留轮转与密钥管理仍未实现。操作说明见 [`../docs/household-memory-sqlite-backup-v0.1.md`](../docs/household-memory-sqlite-backup-v0.1.md)。
 - 新增显式调用的加密备份/恢复库 `src/encrypted-backup.js` 与终端入口 `src/backup-cli.js`：使用 scrypt 派生密钥和 AES-256-GCM 完整性认证；创建备份时持有源文件锁，恢复先验证认证与记忆 JSON/schema；备份和恢复目标均使用“仅新建”策略，不覆盖已有文件。命令是 `npm run backup -- create <家庭记忆.json> <新建备份.enc.json>` 和 `npm run backup -- restore <备份.enc.json> <新建恢复文件.json>`；口令只在交互终端隐藏输入，创建时需输入两次，至少 12 UTF-8 字节，不通过参数、环境变量或管道读取，也不记录或保存。尚未对真实家庭记忆执行备份或恢复。还原后的活动文件仍是明文 JSON，必须由 NTFS ACL/磁盘加密保护；备份介质应是受限的本地/离线介质，不能放普通云盘、Git 或 CtxHop。加密备份也不替代独立的口令安全保管。
 - 新增 `src/routine-trigger.js`：外部本地调度器可按时区轮询已确认的睡觉/起床偏好，在默认 1 分钟窗口内生成稳定的 `routine_due` Event 和 `dedup_key`；同一偏好、同一本地日期的重试会生成相同事件。它默认 `scheduleAuthorized: false`；即使单独授权启用，也只返回事件，不建系统定时器、不发送通知、不控制设备，实际通知通道仍由经授权的外部调度/通知适配器负责。

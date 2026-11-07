@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:lt-agent-program:user-preference-change:0.1",
+  "title": "User preference change request",
+  "description": "Proposed v0.1 sync envelope for confirmed user preferences. The authenticated user/home scope must be derived by the server, never trusted from this body.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "change_id",
+    "preference_id",
+    "operation",
+    "sharing_scope",
+    "expected_revision",
+    "changed_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "change_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Idempotency key generated once per user-confirmed change and reused on retries."
+    },
+    "preference_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Stable client-generated UUID; the server binds it to the authenticated user/home scope on creation and requires it for edits and deletes."
+    },
+    "operation": {
+      "enum": ["upsert", "delete"]
+    },
+    "sharing_scope": {
+      "enum": ["personal", "household"],
+      "description": "Explicit visibility choice. The server resolves the owner from authenticated identity and enforces household membership/role for household scope."
+    },
+    "expected_revision": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optimistic concurrency precondition. Zero means create; positive values must match the server's current revision."
+    },
+    "changed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Client diagnostic timestamp only; it is not used to resolve conflicts."
+    },
+    "preference": {
+      "oneOf": [
+        { "$ref": "#/$defs/comfortTemperature" },
+        { "$ref": "#/$defs/comfortBrightness" },
+        { "$ref": "#/$defs/routineTime" }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "operation": { "const": "upsert" }
+      },
+      "required": ["preference"]
+    },
+    {
+      "properties": {
+        "operation": { "const": "delete" }
+      },
+      "not": { "required": ["preference"] }
+    }
+  ],
+  "$defs": {
+    "comfortTemperature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_type", "value"],
+      "properties": {
+        "memory_type": { "const": "comfort_temperature_c" },
+        "value": { "type": "number", "minimum": 16, "maximum": 30 },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "room_id": { "type": "string", "pattern": "^[a-z0-9_-]{1,40}$" }
+          }
+        }
+      }
+    },
+    "comfortBrightness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_type", "value"],
+      "properties": {
+        "memory_type": { "const": "comfort_brightness_pct" },
+        "value": { "type": "number", "minimum": 1, "maximum": 100 },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "room_id": { "type": "string", "pattern": "^[a-z0-9_-]{1,40}$" }
+          }
+        }
+      }
+    },    "routineTime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_type", "value", "scope"],
+      "properties": {
+        "memory_type": { "enum": ["sleep_time", "wake_time"] },
+        "value": { "type": "string", "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["time_zone"],
+          "properties": {
+            "room_id": { "type": "string", "pattern": "^[a-z0-9_-]{1,40}$" },
+            "day_type": { "enum": ["weekday", "weekend"] },
+            "time_zone": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "description": "IANA timezone; server must validate against its timezone database."
+            }
+          }
+        }
+      }
+    }
+  }
+}
