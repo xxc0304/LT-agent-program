@@ -139,6 +139,21 @@ function Get-ConfigValue {
     return ,(ConvertFrom-JsonCommandOutput -Lines ([string[]]($lines | ForEach-Object { [string]$_ })))
 }
 
+function Get-AutoUpdateEnabledSetting {
+    $lines = @(& $script:openclawPath config get --json update.auto.enabled 2>&1)
+    $exitCode = $LASTEXITCODE
+    $output = (($lines | ForEach-Object { [string]$_ }) -join "`n") -replace '\x1B\[[0-?]*[ -/]*[@-~]', ''
+    if ($exitCode -eq 0) {
+        $value = ConvertFrom-JsonCommandOutput -Lines ([string[]]($lines | ForEach-Object { [string]$_ }))
+        if ($value -isnot [bool]) { throw "OpenClaw setting 'update.auto.enabled' is not a boolean; no profile changes were made." }
+        return [pscustomobject]@{ Enabled = $value; Source = 'explicit-config' }
+    }
+    if ($output -match '(?i)Config path not found:\s*update\.auto\.enabled(?:\.|\s|$)') {
+        return [pscustomobject]@{ Enabled = $false; Source = 'default-off' }
+    }
+    throw "Could not reliably read OpenClaw setting 'update.auto.enabled'; no profile changes were made."
+}
+
 function Resolve-ComparablePath {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
@@ -286,6 +301,8 @@ try {
     }
     $resolvedMemoryDatabasePath = $null
     $preserveImplicitMemoryDatabasePath = $false
+    $autoUpdateSetting = Get-AutoUpdateEnabledSetting
+    $openClawAutoUpdateEnabled = $autoUpdateSetting.Enabled
     if ($EnableSQLiteMemory) {
         $configuredMemoryBackend = Get-ConfigValue -Path 'plugins.entries.device-manager.config.memoryBackend' -Optional
         $configuredMemoryDatabasePath = Get-ConfigValue -Path 'plugins.entries.device-manager.config.memoryDatabasePath' -Optional
@@ -463,6 +480,7 @@ try {
     Write-Host 'LT Agent stack deployment plan' -ForegroundColor Cyan
     Write-Host "  Active OpenClaw profile: $configPath"
     Write-Host "  OpenClaw version: $openClawVersion"
+    Write-Host "  OpenClaw automatic updates: $(if ($openClawAutoUpdateEnabled) { 'enabled (apply blocked)' } elseif ($autoUpdateSetting.Source -eq 'default-off') { 'default off' } else { 'disabled' })"
     Write-Host "  User-facing chat Agent: $frontdoorId"
     Write-Host "  Device-manager plugin source: $(Join-Path $repoRoot 'device-manager')"
     Write-Host "  Platform-orchestrator plugin source: $(Join-Path $repoRoot 'multi-agent-orchestrator')"
@@ -502,6 +520,10 @@ try {
     if ($PlanOnly) {
         Write-Host 'Plan only: no packages were installed and no OpenClaw profile or workspace was modified.' -ForegroundColor Yellow
         exit 0
+    }
+
+    if ($openClawAutoUpdateEnabled) {
+        throw 'OpenClaw automatic updates are enabled. Disable them through the OpenClaw operator configuration and rerun during a separate maintenance window. The installer will not change this setting or install the Agent stack.'
     }
 
     $confirmation = Read-Host 'To back up and apply this plan to the active OpenClaw profile, type INSTALL'

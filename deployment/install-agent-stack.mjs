@@ -182,6 +182,25 @@ function makeConfigReader(commandRunner, openclawPath) {
   };
 }
 
+function readAutoUpdateEnabled(commandRunner, openclawPath) {
+  const result = commandRunner(openclawPath, ["config", "get", "--json", "update.auto.enabled"]);
+  const output = `${String(result?.stdout ?? "")}\n${String(result?.stderr ?? "")}`
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+  if (result?.status === 0) {
+    let enabled;
+    try { enabled = JSON.parse(String(result.stdout).trim()); }
+    catch { throw new Error("Could not parse OpenClaw setting 'update.auto.enabled'; no profile changes were made."); }
+    if (typeof enabled !== "boolean") {
+      throw new Error("OpenClaw setting 'update.auto.enabled' is not a boolean; no profile changes were made.");
+    }
+    return { enabled, source: "explicit-config" };
+  }
+  if (/Config path not found:\s*update\.auto\.enabled(?:\.|\s|$)/i.test(output)) {
+    return { enabled: false, source: "default-off" };
+  }
+  throw new Error("Could not reliably read OpenClaw setting 'update.auto.enabled'; no profile changes were made.");
+}
+
 function getPluginRows(commandRunner, openclawPath) {
   return getRows(parseJsonOutput(
     runChecked(commandRunner, openclawPath, ["plugins", "list", "--verbose", "--json"], "Checking installed OpenClaw plugins"),
@@ -328,6 +347,11 @@ export async function runInstaller(options = {}) {
   }
 
   const getConfig = makeConfigReader(commandRunner, openclawPath);
+  const autoUpdateSetting = readAutoUpdateEnabled(commandRunner, openclawPath);
+  const openclawAutoUpdateEnabled = autoUpdateSetting.enabled;
+  if (apply && openclawAutoUpdateEnabled) {
+    throw new Error("OpenClaw automatic updates are enabled. Disable them through the OpenClaw operator configuration and rerun during a separate maintenance window. The installer will not change this setting or install the Agent stack.");
+  }
   const currentPluginAllowValue = getConfig("plugins.allow", true);
   const hasExplicitPluginAllow = currentPluginAllowValue !== undefined && currentPluginAllowValue !== null;
   const currentPluginAllow = stringArray(currentPluginAllowValue, "plugins.allow");
@@ -413,6 +437,10 @@ export async function runInstaller(options = {}) {
     mode: apply ? "apply-pending-confirmation" : "plan-only",
     npmVersion,
     openclawVersion,
+    openclawAutomaticUpdates: {
+      enabled: openclawAutoUpdateEnabled,
+      source: autoUpdateSetting.source,
+    },
     activeProfileConfig: configPath,
     frontdoorAgentId: frontdoorId,
     projectAgentIds: PROJECT_AGENT_IDS,

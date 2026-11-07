@@ -22,7 +22,7 @@ async function withProfile(run) {
   finally { await rm(dir, { recursive: true, force: true }); }
 }
 
-function fakeOpenClaw(configPath, log = []) {
+function fakeOpenClaw(configPath, log = [], { autoUpdateEnabled } = {}) {
   return (command, args, options = {}) => {
     log.push({ command, args, cwd: options.cwd });
     if (command === "npm" && args.join(" ") === "--version") return { status: 0, stdout: "10.8.2\n" };
@@ -31,12 +31,17 @@ function fakeOpenClaw(configPath, log = []) {
     if (args.join(" ") === "config validate") return { status: 0, stdout: "valid\n" };
     if (args.join(" ") === "agents list --json") return { status: 0, stdout: JSON.stringify([{ id: "main", isDefault: true }]) };
     if (args.join(" ") === "plugins list --verbose --json") return { status: 0, stdout: "[]" };
+    if (args.join(" ") === "config get --json update.auto.enabled") {
+      return autoUpdateEnabled === undefined
+        ? { status: 1, stdout: "", stderr: "Config path not found: update.auto.enabled. Run openclaw config validate to inspect config shape." }
+        : { status: 0, stdout: JSON.stringify(autoUpdateEnabled) };
+    }
     if (args[0] === "config" && args[1] === "get") return { status: 1, stdout: "" };
     return { status: 1, stdout: "", stderr: "unexpected mock command" };
   };
 }
 
-function fakeApplyRunner(configPath, log = [], { failOn } = {}) {
+function fakeApplyRunner(configPath, log = [], { failOn, autoUpdateEnabled } = {}) {
   const projectAgents = [
     { id: "main", tools: {} },
     { id: "device-manager", tools: {} },
@@ -53,6 +58,11 @@ function fakeApplyRunner(configPath, log = [], { failOn } = {}) {
     if (joined === "config validate") return { status: 0, stdout: "valid\n" };
     if (joined === "agents list --json") return { status: 0, stdout: JSON.stringify([{ id: "main", isDefault: true }]) };
     if (joined === "plugins list --verbose --json") return { status: 0, stdout: "[]" };
+    if (joined === "config get --json update.auto.enabled") {
+      return autoUpdateEnabled === undefined
+        ? { status: 1, stdout: "", stderr: "Config path not found: update.auto.enabled. Run openclaw config validate to inspect config shape." }
+        : { status: 0, stdout: JSON.stringify(autoUpdateEnabled) };
+    }
     if (args[0] === "config" && args[1] === "get") {
       const setting = args[3];
       if (setting === "agents.list") {
@@ -83,6 +93,7 @@ test("default run is read-only and writes a JSON plan artifact when requested", 
 
     assert.equal(plan.mode, "plan-only");
     assert.equal(plan.npmVersion, "10.8.2");
+    assert.deepEqual(plan.openclawAutomaticUpdates, { enabled: false, source: "default-off" });
     assert.equal(plan.frontdoorAgentId, "main");
     assert.equal(plan.safety.profileMutations, false);
     assert.equal(plan.safety.packageInstallation, false);
@@ -93,6 +104,42 @@ test("default run is read-only and writes a JSON plan artifact when requested", 
     assert.ok(calls.every(({ args }) => !(args[0] === "config" && args[1] === "set")));
     assert.deepEqual(plan.createAgents, ["device-manager", "energy-saving", "learning-companion"]);
     assert.equal(plan.mainChatOrchestrationTool, "orchestrate_household_agents");
+  });
+});
+
+test("automatic OpenClaw updates block stack apply before package or profile mutations", async () => {
+  await withProfile(async ({ dir, configPath }) => {
+    const calls = [];
+    let confirmationAsked = false;
+    await assert.rejects(runInstaller({
+      repoRoot: packageRoot,
+      commandRunner: fakeApplyRunner(configPath, calls, { autoUpdateEnabled: true }),
+      apply: true,
+      confirmInstall: async () => { confirmationAsked = true; return "INSTALL"; },
+    }), /OpenClaw automatic updates are enabled/);
+
+    assert.equal(confirmationAsked, false);
+    assert.deepEqual(await readdir(dir), ["openclaw.json"]);
+    assert.ok(calls.every(({ command, args }) => !(command === "npm" && args.includes("install"))));
+    assert.ok(calls.every(({ args }) => !(args[0] === "config" && args[1] === "set")));
+    assert.ok(calls.every(({ args }) => args[0] !== "plugins" || args[1] !== "install"));
+    assert.ok(calls.every(({ args }) => args[0] !== "agents" || args[1] !== "add"));
+  });
+});
+
+test("automatic update status read failures stop planning instead of assuming the default", async () => {
+  await withProfile(async ({ configPath }) => {
+    const calls = [];
+    const base = fakeOpenClaw(configPath, calls);
+    const runner = (command, args, options) => {
+      if (args.join(" ") === "config get --json update.auto.enabled") {
+        calls.push({ command, args });
+        return { status: 1, stdout: "", stderr: "could not start OpenClaw CLI" };
+      }
+      return base(command, args, options);
+    };
+    await assert.rejects(runInstaller({ repoRoot: packageRoot, commandRunner: runner }), /Could not reliably read OpenClaw setting/);
+    assert.ok(calls.every(({ args }) => !(args[0] === "config" && args[1] === "set")));
   });
 });
 
@@ -223,6 +270,13 @@ test("confirmed apply backs up first, dry-runs every config write, then applies 
     const dirEntries = await readdir(dir);
     const backupName = dirEntries.find((name) => name.endsWith(".bak"));
     assert.equal(plan.mode, "applied");
+    const linkedPluginInstalls = calls.filter(({ args }) => args[0] === "plugins" && args[1] === "install");
+    assert.equal(linkedPluginInstalls.length, 2);
+    assert.ok(linkedPluginInstalls.every(({ args }) => args[2] === "--link"));
+    assert.deepEqual(linkedPluginInstalls.map(({ args }) => args[3]), [
+      join(packageRoot, "device-manager"),
+      join(packageRoot, "multi-agent-orchestrator"),
+    ]);
     assert.ok(backupName);
     assert.deepEqual(await readFile(join(dir, backupName), "utf8"), "{}\n");
     assert.equal(plan.backupPath, join(dir, backupName));
