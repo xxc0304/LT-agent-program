@@ -39,6 +39,7 @@ test("online backup and restore preserve a consistent SQLite memory snapshot", a
     assert.equal(backup.encrypted, false);
     assert.equal(backup.memory_count, 1);
     if (process.platform !== "win32") {
+      assert.equal((await fs.stat(path.dirname(backupPath))).mode & 0o777, 0o700);
       assert.equal((await fs.stat(backupPath)).mode & 0o777, 0o600);
     }
     assert.deepEqual(await fs.readFile(databasePath), sourceBeforeBackup);
@@ -55,6 +56,7 @@ test("online backup and restore preserve a consistent SQLite memory snapshot", a
     assert.equal(restored.encrypted, false);
     assert.equal(restored.memory_count, 1);
     if (process.platform !== "win32") {
+      assert.equal((await fs.stat(path.dirname(restoredPath))).mode & 0o777, 0o700);
       assert.equal((await fs.stat(restoredPath)).mode & 0o777, 0o600);
     }
 
@@ -69,6 +71,34 @@ test("online backup and restore preserve a consistent SQLite memory snapshot", a
     } finally {
       recoveredStore.close();
     }
+  } finally {
+    store.close();
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("backup refuses an existing output directory accessible by group or others", { skip: process.platform === "win32" }, async () => {
+  const directory = await temporaryDirectory();
+  const databasePath = path.join(directory, "source.sqlite");
+  const sharedDirectory = path.join(directory, "shared-backups");
+  const backupPath = path.join(sharedDirectory, "memory.sqlite");
+  const store = new PreferenceMemoryStore({ backend: "sqlite", databasePath });
+
+  try {
+    await store.saveExplicitPreference({
+      memory_type: "comfort_temperature_c",
+      value: 22,
+      user_explicit_request: true,
+    });
+    await fs.mkdir(sharedDirectory, { mode: 0o755 });
+    await fs.chmod(sharedDirectory, 0o755);
+
+    await assert.rejects(
+      createSQLiteMemoryBackup({ sourcePath: databasePath, backupPath }),
+      { code: "MEMORY_DATABASE_DIRECTORY_NOT_PRIVATE" },
+    );
+    assert.equal((await fs.stat(sharedDirectory)).mode & 0o777, 0o755);
+    await assert.rejects(fs.stat(backupPath), { code: "ENOENT" });
   } finally {
     store.close();
     await fs.rm(directory, { recursive: true, force: true });
