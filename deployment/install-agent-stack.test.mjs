@@ -9,6 +9,36 @@ import { comparablePath, REQUIRED_OPENCLAW_VERSION, runInstaller } from "./insta
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 
+function compareOpenClawVersions(left, right) {
+  const parse = (value) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value);
+    assert.ok(match, `Unsupported OpenClaw version format: ${value}`);
+    return {
+      core: match.slice(1, 4).map(Number),
+      prerelease: match[4] ? match[4].split(".") : [],
+    };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < a.core.length; index += 1) {
+    if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index];
+  }
+  if (a.prerelease.length === 0 && b.prerelease.length === 0) return 0;
+  if (a.prerelease.length === 0) return 1;
+  if (b.prerelease.length === 0) return -1;
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    if (a.prerelease[index] === undefined) return -1;
+    if (b.prerelease[index] === undefined) return 1;
+    if (a.prerelease[index] === b.prerelease[index]) continue;
+    const aNumeric = /^\d+$/.test(a.prerelease[index]);
+    const bNumeric = /^\d+$/.test(b.prerelease[index]);
+    if (aNumeric && bNumeric) return Number(a.prerelease[index]) - Number(b.prerelease[index]);
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return a.prerelease[index].localeCompare(b.prerelease[index]);
+  }
+  return 0;
+}
+
 test("path identity follows filesystem case rules for Linux and Windows", () => {
   assert.notEqual(comparablePath("/srv/OpenClaw/plugins"), comparablePath("/srv/openclaw/plugins"));
   assert.equal(comparablePath("C:\\OpenClaw\\plugins"), comparablePath("c:/openclaw/PLUGINS/"));
@@ -23,6 +53,12 @@ test("OpenClaw compatibility target stays aligned across installers, plugins, an
     assert.equal(packageJson.openclaw.build.openclawVersion, compatibility.requiredVersion, `${packagePath} OpenClaw build target`);
     assert.equal(packageJson.openclaw.build.pluginSdkVersion, compatibility.requiredVersion, `${packagePath} SDK target`);
     assert.equal(packageJson.peerDependencies.openclaw, packageJson.openclaw.compat.pluginApi, `${packagePath} plugin API range`);
+    const minimumMatch = /^>=\s*(.+)$/.exec(packageJson.openclaw.compat.minGatewayVersion);
+    assert.ok(minimumMatch, `${packagePath} must declare an explicit minimum Gateway version`);
+    assert.ok(
+      compareOpenClawVersions(compatibility.requiredVersion, minimumMatch[1]) >= 0,
+      `${packagePath} minimum Gateway version exceeds the installer target`,
+    );
   }
 
   const powershellInstaller = await readFile(join(packageRoot, "deployment/Install-Agent-Stack.ps1"), "utf8");
