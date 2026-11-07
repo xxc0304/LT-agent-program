@@ -23,6 +23,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Verify OpenClaw update coordination in the Linux installer
+        run: node --test deployment/install-agent-stack.test.mjs
+
       - name: Install device-manager direct dependencies for Mock tests
         run: npm install --no-save --package-lock=false --omit=peer --legacy-peer-deps --ignore-scripts
         working-directory: device-manager
@@ -42,6 +45,17 @@ jobs:
       - name: Validate platform-orchestrator OpenClaw plugin
         run: ../device-manager/node_modules/.bin/openclaw plugins validate --root . --entry ./src/openclaw-platform-plugin.js
         working-directory: multi-agent-orchestrator
+
+      - name: Verify Profile sync contracts and Linux SQLite behavior
+        run: |
+          node --check agent-memory/examples/profile-sync-linux-key-provider-smoke.js
+          node --test \
+            agent-memory/test/profile-consent-prototype.test.js \
+            agent-memory/test/profile-sync-engine.test.js \
+            agent-memory/test/profile-sync-http.test.js \
+            agent-memory/test/profile-sync-key-derivation.test.js \
+            agent-memory/test/profile-sync-sqlite-path.test.js
+          node agent-memory/examples/profile-sync-local-e2e-prototype.js
 
       - name: Run Linux local and Mock verification suite
         run: node deployment/verify-agent-stack.mjs
