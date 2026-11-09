@@ -1,6 +1,6 @@
 # Profile 同步持久化契约（草案 v0.1）
 
-状态：数据库无关的服务端实现草案；未选型、未部署、未处理真实用户数据。本文只把现有 Profile API 和内存原型的语义转换为持久化要求，不是可直接执行的数据库迁移。
+状态：数据库无关的服务端实现草案；未选型、未部署、未处理真实用户数据。本文只把现有 Profile API 和本地原型的语义转换为持久化要求，不是可直接执行的数据库迁移。
 
 ## 1. 持久化边界
 
@@ -39,7 +39,7 @@
 
 删除需要已有且未删除的记录。成功删除后，活动状态中的偏好值应清空，revision 和游标递增，feed 写最小 tombstone，幂等结果与删除原子提交。不得把删除当成普通空值 upsert。
 
-授权变更契约见 [`profile-consent-change.schema.json`](../common-contracts/schemas/profile-consent-change.schema.json)，对应 `POST /v1/preferences/consents`。服务端按已验证主体及 permission/purpose/scope/category 定位 `consent_state`，校验 `expected_revision`，将 grant/revoke、新 revision 与幂等结果原子提交。授权检查必须与偏好读写具有可说明的一致性边界：撤回提交后发起的新请求应失败关闭；与撤回并发的在途读写须通过行锁、事务版本或等价机制界定顺序，不能仅依赖异步通知。授权端点和状态目前仅为契约草案，没有本地或生产授权服务实现。
+授权变更契约见 [`profile-consent-change.schema.json`](../common-contracts/schemas/profile-consent-change.schema.json)，对应 `POST /v1/preferences/consents`。服务端按已验证主体及 permission/purpose/scope/category 定位 `consent_state`，校验 `expected_revision`，将 grant/revoke、新 revision 与幂等结果原子提交。授权检查必须与偏好读写具有可说明的一致性边界：撤回提交后发起的新请求应失败关闭；与撤回并发的在途读写须通过行锁、事务版本或等价机制界定顺序，不能仅依赖异步通知。仓库有本地合成 SQLite 授权原型，但没有生产授权服务。
 
 增量拉取只查询已授权 owner/scope 的 `cursor > requested_cursor` 行，按 cursor 升序分页；返回 `next_cursor` 与 `has_more`。客户端只有在整页成功应用后才保存 next cursor。响应不可跨 owner/scope 缓存，HTTP 响应保持 `Cache-Control: no-store`。
 
@@ -59,7 +59,9 @@
 
 ## 6. 当前与目标的差距
 
-当前 `createInMemoryProfileSyncPrototype()` 只有进程内 Map。另有 `createSqliteProfileSyncPrototype()` 本地参考适配器，将整个原型状态序列化到一个 SQLite snapshot 行，并以 SQLite 事务跨服务实例重开恢复；其数据为明文，只用于合成数据演示，不是本文逻辑集合的规范化生产实现，也不构成数据库选型。`profile-consent-prototype.js` 提供进程内授权状态与 grant/revoke/revision/幂等演示，家庭授权默认失败关闭；它没有持久化或身份认证。`profile-sync-http-adapter.js` 仍是不监听端口的 `Request → Response` 原型，身份解析与当前授权由调用方注入，可选接入此内存授权账本完成本地合成请求。
+当前 `createInMemoryProfileSyncPrototype()` 只有进程内 Map。另有 `createSqliteProfileSyncPrototype()` 本地参考适配器，将整个原型状态序列化到一个 SQLite snapshot 行，并以 SQLite 事务跨服务实例重开恢复；其数据为明文，只用于合成数据演示，不是本文逻辑集合的规范化生产实现，也不构成数据库选型。`profile-consent-prototype.js` 提供进程内授权状态原型；`profile-consent-sqlite-prototype.js` 把授权记录、revision 和幂等结果序列化到 SQLite snapshot 行，可跨服务实例重开恢复。两者都只处理合成数据，不认证真实用户；家庭授权默认失败关闭，只有宿主注入可信成员授权回调后才允许。`profile-sync-http-adapter.js` 仍是 `Request → Response` 核心适配器，身份解析与当前授权由调用方注入；新增 `profile-sync-local-http-server.js` 仅为本地合成回归提供严格绑定 `127.0.0.1` 的 HTTP 传输，不能对外网卡监听，也不包含生产身份/同意服务、TLS 或云部署。`profile-sync-local-e2e-prototype.js` 现通过临时 loopback 端口真实发送 HTTP 请求，并重开 SQLite 偏好与授权原型验证 tombstone、变更记录和授权状态恢复；偏好值及授权快照均为明文，仅用于合成数据临时目录。
+
+HTTP 原型适配器现在会在单个进程内串行化同意授予/撤回与所有受同意保护的 Profile 读写，使请求按适配器队列顺序完成授权检查及操作，避免本地原型中的撤权检查/写入竞态。该队列不跨适配器实例或进程；生产实现仍必须按本节原子事务要求，在共享数据库事务中验证当前同意并提交偏好变更。授权服务不可用也会作为 `CONSENT_SERVICE_UNAVAILABLE` 传播，不能伪装成用户未同意。
 
 另有 `/v1/preferences/current` 本地草案用于 Agent 任务的按类别读取：请求必须指定单一 `memory_type`，并在用途 `agent_task` 下对该类别与 scope 重查当前同意，响应只含匹配的当前偏好。它与全量变更 feed 分开，避免把设备同步缓存的整页内容直接提供给 Agent。`profile-sync-agent-reader.js` 将 OpenClaw 可信 sender context 映射到该接口，固定个人 scope 并去除不必要身份字段；目前仅在合成身份/授权演示中通过，未注册成真实 OpenClaw 工具，也未接真实身份、同意服务、bearer token provider 或网络。
 

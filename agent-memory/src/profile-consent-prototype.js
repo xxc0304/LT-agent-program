@@ -38,6 +38,58 @@ function consentTuple({ permission, purpose, sharing_scope, preference_type }) {
   ]);
 }
 
+function normalizeInitialState(initialState) {
+  if (initialState === undefined) return { schema_version: "0.1", records: [], idempotency: [] };
+  if (!initialState || typeof initialState !== "object" || Array.isArray(initialState)
+    || Object.keys(initialState).sort().join("\0") !== ["idempotency", "records", "schema_version"].join("\0")
+    || initialState.schema_version !== "0.1"
+    || !Array.isArray(initialState.records)
+    || !Array.isArray(initialState.idempotency)) {
+    throw new TypeError("Unsupported Profile consent snapshot.");
+  }
+
+  const records = [];
+  const recordKeys = new Set();
+  for (const record of initialState.records) {
+    if (!record || typeof record !== "object" || Array.isArray(record)
+      || typeof record.owner_id !== "string" || !record.owner_id.trim() || record.owner_id.length > 128
+      || !PERMISSIONS.has(record.permission) || !PURPOSES.has(record.purpose)
+      || !SHARING_SCOPES.has(record.sharing_scope)
+      || typeof record.active !== "boolean"
+      || !Number.isSafeInteger(record.revision) || record.revision < 1
+      || typeof record.changed_at !== "string" || !Number.isFinite(Date.parse(record.changed_at))) {
+      throw new TypeError("Invalid Profile consent snapshot record.");
+    }
+    if (record.purpose === "agent_task") {
+      if (record.permission !== "profile:read" || !MEMORY_TYPES.has(record.preference_type)) {
+        throw new TypeError("Invalid Profile task consent snapshot record.");
+      }
+    } else if (Object.hasOwn(record, "preference_type")) {
+      throw new TypeError("Invalid Profile sync consent snapshot record.");
+    }
+    const recordKey = JSON.stringify([record.owner_id, consentTuple(record)]);
+    if (recordKeys.has(recordKey)) throw new TypeError("Duplicate Profile consent snapshot record.");
+    recordKeys.add(recordKey);
+    records.push({ ...record });
+  }
+
+  const idempotency = [];
+  const idempotencyKeys = new Set();
+  for (const entry of initialState.idempotency) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)
+      || typeof entry.key !== "string" || typeof entry.payload_hash !== "string"
+      || !/^[a-f0-9]{64}$/.test(entry.payload_hash)
+      || !entry.result || typeof entry.result !== "object" || Array.isArray(entry.result)
+      || ![200, 404, 409].includes(entry.result.status)) {
+      throw new TypeError("Invalid Profile consent idempotency snapshot entry.");
+    }
+    if (idempotencyKeys.has(entry.key)) throw new TypeError("Duplicate Profile consent idempotency key.");
+    idempotencyKeys.add(entry.key);
+    idempotency.push({ key: entry.key, payload_hash: entry.payload_hash, result: { ...entry.result } });
+  }
+  return { schema_version: "0.1", records, idempotency };
+}
+
 export function validateProfileConsentChange(change) {
   if (!change || typeof change !== "object" || Array.isArray(change)
     || Object.keys(change).sort().join("\0") !== [
@@ -73,12 +125,19 @@ export function validateProfileConsentChange(change) {
  * consent service. Household access is denied unless the host injects a
  * trusted role/membership check.
  */
-export function createInMemoryProfileConsentPrototype({ authorizeScope } = {}) {
+export function createInMemoryProfileConsentPrototype({ authorizeScope, initialState } = {}) {
   if (authorizeScope !== undefined && typeof authorizeScope !== "function") {
     throw new TypeError("authorizeScope must be a trusted host callback when provided.");
   }
-  const records = new Map();
-  const idempotency = new Map();
+  const normalizedInitialState = normalizeInitialState(initialState);
+  const records = new Map(normalizedInitialState.records.map((record) => [
+    JSON.stringify([record.owner_id, consentTuple(record)]),
+    record,
+  ]));
+  const idempotency = new Map(normalizedInitialState.idempotency.map((entry) => [
+    entry.key,
+    { payload_hash: entry.payload_hash, result: entry.result },
+  ]));
 
   async function authorize(principal, sharingScope, permission, purpose, operation) {
     const ownerId = validatePrincipal(principal, sharingScope);
@@ -154,7 +213,8 @@ export function createInMemoryProfileConsentPrototype({ authorizeScope } = {}) {
     let ownerId;
     try {
       ownerId = await authorize(principal, request.sharing_scope, request.permission, request.purpose, "check");
-    } catch {
+    } catch (error) {
+      if (error?.code === "CONSENT_SERVICE_UNAVAILABLE") throw error;
       return false;
     }
     return records.get(JSON.stringify([ownerId, consentTuple(request)]))?.active === true;
@@ -169,5 +229,19 @@ export function createInMemoryProfileConsentPrototype({ authorizeScope } = {}) {
       .sort((left, right) => consentTuple(left).localeCompare(consentTuple(right)));
   }
 
-  return Object.freeze({ applyChange, hasCurrentConsent, listCurrent });
+  function exportState() {
+    return {
+      schema_version: "0.1",
+      records: [...records.values()].map((record) => ({ ...record }))
+        .sort((left, right) => JSON.stringify([left.owner_id, consentTuple(left)])
+          .localeCompare(JSON.stringify([right.owner_id, consentTuple(right)]))),
+      idempotency: [...idempotency.entries()].map(([key, entry]) => ({
+        key,
+        payload_hash: entry.payload_hash,
+        result: { ...entry.result },
+      })).sort((left, right) => left.key.localeCompare(right.key)),
+    };
+  }
+
+  return Object.freeze({ applyChange, hasCurrentConsent, listCurrent, exportState });
 }

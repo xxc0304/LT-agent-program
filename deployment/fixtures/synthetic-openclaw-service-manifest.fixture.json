@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "service": {
+    "id": "example-shopping-service",
+    "api_contract_version": "synthetic-1"
+  },
+  "connector": {
+    "package_name": "@example/shopping-openclaw",
+    "plugin_id": "example-shopping-service",
+    "version": "1.0.0",
+    "tested_openclaw_versions": [
+      "2026.7.1-2"
+    ]
+  },
+  "authentication": {
+    "credential_ref": "env:EXAMPLE_SERVICE_TOKEN",
+    "permissions": [
+      "catalog.read"
+    ]
+  },
+  "capabilities": [
+    {
+      "name": "search_catalog",
+      "effect": "read_only",
+      "permissions": [
+        "catalog.read"
+      ],
+      "confirmation": "not_required"
+    }
+  ],
+  "data_policy": {
+    "categories": [
+      "synthetic_product_catalog"
+    ],
+    "personal_data": "none",
+    "retention_days": null
+  },
+  "verification": {
+    "test_environment": "mock",
+    "synthetic_data_only": true
+  }
+}

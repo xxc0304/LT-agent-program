@@ -38,7 +38,7 @@
 
 仓库当前锁定/记录的目标是 `2026.7.1-2`。该版本对应的官方更新文档说明：自动更新默认关闭；若开启，stable 有默认 6 小时延迟和最多 12 小时的确定性抖动，beta 每小时检查并立即应用，dev 不自动应用；`OPENCLAW_NO_AUTO_UPDATE=1` 可阻止自动应用。普通 `openclaw update` 会执行更新维护并重启 Gateway；对受管服务有安全交接路径，`--no-restart` 会让运行中的 Gateway 暂时继续使用旧代码。
 
-**本仓库的版本门槛需按部署组合解读：** `device-manager` 单独声明 `peerDependencies`/`minGatewayVersion >=2026.5.17`，但其构建 SDK 目标为 `2026.7.1-2`；`multi-agent-orchestrator` 声明 API 和 Gateway 最低版本 `>=2026.7.1-2`。所以两者组合部署时，有效最低 Gateway 版本是较严格的 `2026.7.1-2`；这不是更新器冲突。Linux workflow 也显式安装 `openclaw@2026.7.1-2` 并用它验证两个插件。该 workflow 在当前隔离工作树中尚未推送/运行，因此只是配置门槛，不构成 Ubuntu CI 已通过的证据。若未来只部署 `device-manager`，仍可按其单包最低声明评估，但必须在对应 Gateway 版本实际校验插件构建目标兼容性。
+**本仓库的版本门槛需按部署组合解读：** `device-manager` 单独声明 `peerDependencies`/`minGatewayVersion >=2026.5.17`，但其构建 SDK 目标为 `2026.7.1-2`；`multi-agent-orchestrator` 声明 API 和 Gateway 最低版本 `>=2026.7.1-2`。所以两者组合部署时，有效最低 Gateway 版本是较严格的 `2026.7.1-2`；这不是更新器冲突。Linux workflow 显式安装 `openclaw@2026.7.1-2` 并验证两个插件；Ubuntu 24.04 / Node.js 24 的 run #26 已通过（详情见下方 GitHub 状态复核）。该 CI 证明插件构建/契约检查通过，不代表真实 Gateway 配置或用户机器上的自动更新交互已验收。若未来只部署 `device-manager`，仍可按其单包最低声明评估，但必须在对应 Gateway 版本实际校验插件构建目标兼容性。
 
 截至本次核对，OpenClaw 官方在线文档已描述更新后的 Gateway 自动更新调度、受管服务交接，以及独立的 headless node runtime 自动更新。它们不应倒推为 `2026.7.1-2` 的行为：项目目标机必须以实际安装版本、安装类型和服务管理方式为准。特别是：
 

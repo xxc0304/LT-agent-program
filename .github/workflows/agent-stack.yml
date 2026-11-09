@@ -26,6 +26,19 @@ jobs:
       - name: Verify OpenClaw update coordination in the Linux installer
         run: node --test deployment/install-agent-stack.test.mjs
 
+      - name: Verify OpenClaw service connector update preflight
+        run: node --test deployment/openclaw-service-integration.test.mjs
+
+      - name: Verify offline orchestration Mock fixtures
+        run: |
+          node --test \
+            experiments/orchestration-comparison-v2/candidate-profile-contract.test.mjs \
+            experiments/orchestration-comparison-v2/mock-household-harness.test.mjs \
+            experiments/orchestration-comparison-v2/experiment-api-key-linux.test.mjs
+          bash -n experiments/orchestration-comparison-v2/tools/dry_run_profiles_linux.sh
+          bash -n experiments/orchestration-comparison-v2/tools/experiment-api-key-linux.sh
+          node experiments/orchestration-comparison-v2/mock-household-harness.mjs
+
       - name: Install device-manager direct dependencies for Mock tests
         run: npm install --no-save --package-lock=false --omit=peer --legacy-peer-deps --ignore-scripts
         working-directory: device-manager
@@ -33,6 +46,11 @@ jobs:
       - name: Install target OpenClaw SDK for adapter tests
         run: npm install --no-save --package-lock=false --include=peer --ignore-scripts openclaw@2026.7.1-2
         working-directory: device-manager
+
+      - name: Dry-run all four orchestration profiles with target OpenClaw
+        run: |
+          PATH="$GITHUB_WORKSPACE/device-manager/node_modules/.bin:$PATH" \
+            bash experiments/orchestration-comparison-v2/tools/dry_run_profiles_linux.sh all
 
       - name: Install orchestrator direct dependencies for Mock tests
         run: npm install --no-save --package-lock=false --omit=peer --legacy-peer-deps --ignore-scripts
@@ -51,9 +69,12 @@ jobs:
           node --check agent-memory/examples/profile-sync-linux-key-provider-smoke.js
           node --test \
             agent-memory/test/profile-consent-prototype.test.js \
+            agent-memory/test/profile-consent-sqlite-prototype.test.js \
             agent-memory/test/profile-sync-engine.test.js \
             agent-memory/test/profile-sync-http.test.js \
+            agent-memory/test/profile-sync-local-http-server.test.js \
             agent-memory/test/profile-sync-key-derivation.test.js \
+            agent-memory/test/profile-sync-linux-secret-service-provider.test.js \
             agent-memory/test/profile-sync-sqlite-path.test.js
           node agent-memory/examples/profile-sync-local-e2e-prototype.js
 

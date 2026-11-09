@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenClaw service integration manifest",
+  "description": "Provider-neutral metadata for reviewing a service connector. A valid manifest does not authorize installation or activation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "service",
+    "connector",
+    "authentication",
+    "capabilities",
+    "data_policy",
+    "verification"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "api_contract_version"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "api_contract_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "connector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package_name", "plugin_id", "version", "tested_openclaw_versions"],
+      "properties": {
+        "package_name": { "type": "string", "pattern": "^(?:@[a-z0-9][a-z0-9._-]*\\/)?[a-z0-9][a-z0-9._-]*$" },
+        "plugin_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+        "version": { "$ref": "#/$defs/semantic_version" },
+        "tested_openclaw_versions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/semantic_version" }
+        }
+      }
+    },
+    "authentication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["credential_ref", "permissions"],
+      "properties": {
+        "credential_ref": { "type": "string", "pattern": "^(?:env:[A-Z][A-Z0-9_]*|secret-store:[a-z0-9][a-z0-9._/-]*)$" },
+        "permissions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9:._/-]*$" }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "effect", "permissions", "confirmation"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+          "effect": { "enum": ["read_only", "planning", "external_write"] },
+          "permissions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9:._/-]*$" }
+          },
+          "confirmation": { "enum": ["required_per_request", "not_required"] }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "effect": { "const": "external_write" } }, "required": ["effect"] },
+            "then": {
+              "properties": {
+                "permissions": { "minItems": 1 },
+                "confirmation": { "const": "required_per_request" }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "data_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["categories", "personal_data", "retention_days"],
+      "properties": {
+        "categories": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "personal_data": { "enum": ["none", "transient", "stored"] },
+        "retention_days": { "type": ["integer", "null"], "minimum": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "personal_data": { "const": "stored" } }, "required": ["personal_data"] },
+          "then": { "properties": { "retention_days": { "type": "integer", "minimum": 1 } } }
+        }
+      ]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test_environment", "synthetic_data_only"],
+      "properties": {
+        "test_environment": {
+          "enum": ["mock", "sandbox"],
+          "description": "Self-reported test environment. Static manifest preflight does not verify test execution."
+        },
+        "synthetic_data_only": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "semantic_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    }
+  }
+}

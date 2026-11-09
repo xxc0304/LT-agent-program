@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createOpenClawProfilePreferenceReader } from "../src/profile-sync-agent-reader.js";
+import { createInMemoryProfileConsentPrototype } from "../src/profile-consent-prototype.js";
 import { createProfileSyncHttpAdapter } from "../src/profile-sync-http-adapter.js";
 import { createProfileSyncHttpClient } from "../src/profile-sync-http-client.js";
 import { createInMemoryProfileSyncPrototype } from "../src/profile-sync-prototype.js";
@@ -136,6 +137,84 @@ test("missing identity and revoked sync consent fail closed for reads and writes
   assert.equal(deniedWrite.status, 403);
   assert.equal(deniedWrite.body.code, "PROFILE_CONSENT_REQUIRED");
   assert.deepEqual(fixture.service.pull({ principal: PRINCIPAL_A, sharing_scope: "personal" }).changes, []);
+});
+
+test("a queued consent revocation completes before the next profile write is authorized", async () => {
+  let consentGranted = true;
+  let signalRevocationEntered;
+  let releaseRevocation;
+  const revocationEntered = new Promise((resolve) => { signalRevocationEntered = resolve; });
+  const revocationGate = new Promise((resolve) => { releaseRevocation = resolve; });
+  const profileStore = createInMemoryProfileSyncPrototype({ clock: CLOCK });
+  let appliedChanges = 0;
+  const service = {
+    applyChange: async (args) => {
+      appliedChanges += 1;
+      return profileStore.applyChange(args);
+    },
+    pull: (...args) => profileStore.pull(...args),
+    readCurrentPreferences: (...args) => profileStore.readCurrentPreferences(...args),
+  };
+  const tokens = new Map([[TOKEN_A, PRINCIPAL_A]]);
+  const adapter = createProfileSyncHttpAdapter({
+    service,
+    consentService: {
+      applyChange: async () => {
+        signalRevocationEntered();
+        await revocationGate;
+        consentGranted = false;
+        return { status: 200, applied: true, active: false, revision: 2 };
+      },
+    },
+    resolveBearerToken: async (token) => tokens.get(token) ?? null,
+    hasCurrentConsent: async () => consentGranted,
+  });
+  const post = (route, body) => adapter(new Request(`https://profile.test.invalid${route}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN_A}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }));
+
+  const revocationPromise = post("/v1/preferences/consents", { operation: "revoke", sharing_scope: "personal" });
+  await revocationEntered;
+  const writePromise = post("/v1/preferences/changes", makeChange({
+    preferenceId: "957045ef-bdd0-4caf-bab1-b2baf4697119",
+    changeId: "8de93b82-4102-4617-9b35-5d83c2fa35d1",
+  }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(appliedChanges, 0, "profile write must wait while the revocation is being committed");
+
+  releaseRevocation();
+  const revocationResponse = await revocationPromise;
+  const writeResponse = await writePromise;
+  assert.equal(revocationResponse.status, 200);
+  assert.equal(writeResponse.status, 403);
+  assert.equal((await writeResponse.json()).code, "PROFILE_CONSENT_REQUIRED");
+  assert.equal(appliedChanges, 0);
+});
+
+test("an authorization service outage is returned as unavailable, not missing consent", async () => {
+  const principal = {
+    ...PRINCIPAL_A,
+    home_id: "synthetic-home-a",
+    sharing_scopes: ["personal", "household"],
+  };
+  const ledger = createInMemoryProfileConsentPrototype({
+    authorizeScope: async () => { throw new Error("synthetic authorization service outage"); },
+  });
+  const adapter = createProfileSyncHttpAdapter({
+    service: createInMemoryProfileSyncPrototype({ clock: CLOCK }),
+    consentService: ledger,
+    resolveBearerToken: async (token) => token === TOKEN_A ? principal : null,
+    hasCurrentConsent: ledger.hasCurrentConsent,
+  });
+  const response = await adapter(new Request(
+    "https://profile.test.invalid/v1/preferences/changes?sharing_scope=household",
+    { headers: { authorization: `Bearer ${TOKEN_A}` } },
+  ));
+
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "CONSENT_SERVICE_UNAVAILABLE");
 });
 
 test("OpenClaw bridge derives identity from trusted context and rejects model identity fields", async () => {

@@ -114,3 +114,17 @@ test("Agent task grants are category specific and household management fails clo
     (error) => error.code === "HOUSEHOLD_ACCESS_DENIED",
   );
 });
+
+test("consent service outages remain distinguishable from missing consent", async () => {
+  const ledger = createInMemoryProfileConsentPrototype({
+    authorizeScope: async () => { throw new Error("synthetic authorization service outage"); },
+  });
+  await assert.rejects(
+    () => ledger.hasCurrentConsent({ ...principal, home_id: "synthetic-home-a" }, {
+      permission: "profile:read",
+      purpose: "preference_sync",
+      sharing_scope: "household",
+    }),
+    (error) => error.code === "CONSENT_SERVICE_UNAVAILABLE",
+  );
+});

@@ -5,14 +5,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { createEncryptedProfileSyncClientCache } from "../src/profile-sync-client-cache-sqlite.js";
-import { createInMemoryProfileConsentPrototype } from "../src/profile-consent-prototype.js";
+import { createSqliteProfileConsentPrototype } from "../src/profile-consent-sqlite-prototype.js";
 import { createProfileSyncEngine } from "../src/profile-sync-engine.js";
 import { createProfileSyncOutbox } from "../src/profile-sync-outbox.js";
 import { buildPreferenceDeleteChange } from "../src/profile-sync-payload.js";
 import { createProfileSyncHttpClient } from "../src/profile-sync-http-client.js";
 import { createSqliteProfileSyncPrototype } from "../src/profile-sync-sqlite-prototype.js";
 import { buildPreferenceMigrationPreview, enqueuePreferenceMigration } from "../src/profile-sync-migration.js";
-import { createProfileSyncHttpAdapter } from "../src/profile-sync-http-adapter.js";
+import { startLocalProfileSyncHttpServer } from "../src/profile-sync-local-http-server.js";
 
 const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "profile-sync-local-e2e-"));
 const principalBinding = "synthetic-local-e2e-profile";
@@ -25,7 +25,7 @@ const principal = {
 const now = "2026-11-07T00:00:00.000Z";
 const clock = () => Date.parse(now);
 const encryptionKey = randomBytes(32);
-const consentLedger = createInMemoryProfileConsentPrototype();
+let consentLedger;
 const syntheticBearerToken = "synthetic-local-e2e-token-not-a-credential";
 const memory = {
   memory_id: randomUUID(),
@@ -40,25 +40,35 @@ const memory = {
 };
 const memories = [memory];
 let service;
+let server;
 let outbox;
 let cache;
+let profileClient;
+
+const resolveBearerToken = async (token) => token === syntheticBearerToken ? principal : null;
+const hasCurrentConsent = (actor, request) => consentLedger.hasCurrentConsent(actor, request);
+async function startServer() {
+  server = await startLocalProfileSyncHttpServer({
+    service,
+    consentService: consentLedger,
+    resolveBearerToken,
+    hasCurrentConsent,
+  });
+  profileClient = createProfileSyncHttpClient({
+    apiBaseUrl: server.apiBaseUrl,
+    getBearerToken: async () => syntheticBearerToken,
+  });
+}
 
 try {
+  consentLedger = await createSqliteProfileConsentPrototype({
+    databasePath: path.join(temporaryDirectory, "profile-consent.sqlite"),
+  });
   service = await createSqliteProfileSyncPrototype({
     databasePath: path.join(temporaryDirectory, "profile-service.sqlite"),
     clock,
   });
-  const profileApi = createProfileSyncHttpAdapter({
-    service,
-    consentService: consentLedger,
-    resolveBearerToken: async (token) => token === syntheticBearerToken ? principal : null,
-    hasCurrentConsent: (actor, request) => consentLedger.hasCurrentConsent(actor, request),
-  });
-  const profileClient = createProfileSyncHttpClient({
-    apiBaseUrl: "https://local.invalid",
-    getBearerToken: async () => syntheticBearerToken,
-    fetchImpl: profileApi,
-  });
+  await startServer();
   const postChange = (change) => profileClient.sendChange(change);
   const pullPage = (cursor) => profileClient.pullPage({ sharing_scope: "personal", cursor });
   async function changeConsent({ operation = "grant", permission, purpose, preference_type, expected_revision = 0 }) {
@@ -85,9 +95,9 @@ try {
     user_requested_delete: true,
     clock,
   });
-  const unauthenticatedResponse = await profileApi(new Request(
-    "https://local.invalid/v1/preferences/changes?sharing_scope=personal&cursor=0",
-  ));
+  const unauthenticatedResponse = await fetch(
+    `${server.apiBaseUrl}/v1/preferences/changes?sharing_scope=personal&cursor=0`,
+  );
   const unauthenticatedRead = { status: unauthenticatedResponse.status, body: await unauthenticatedResponse.json() };
   assert.equal(unauthenticatedRead.status, 401);
   const consentDeniedWrite = await postChange(deniedChange);
@@ -207,6 +217,32 @@ try {
   assert.equal(finalFeed.records[0].deleted, true);
   assert.equal(Object.hasOwn(finalFeed.records[0], "preference"), false);
 
+  await server.close();
+  server = null;
+  service.close();
+  await consentLedger.close();
+  consentLedger = null;
+  service = await createSqliteProfileSyncPrototype({
+    databasePath: path.join(temporaryDirectory, "profile-service.sqlite"),
+    clock,
+  });
+  consentLedger = await createSqliteProfileConsentPrototype({
+    databasePath: path.join(temporaryDirectory, "profile-consent.sqlite"),
+  });
+  await startServer();
+  const restoredPage = await profileClient.pullPage({ sharing_scope: "personal", cursor: 0 });
+  assert.equal(restoredPage.changes.some((change) => change.operation === "delete"), true);
+  const restoredCurrent = await profileClient.readCurrentPreferences({
+    sharing_scope: "personal",
+    memory_type: "comfort_temperature_c",
+  });
+  assert.equal(restoredCurrent.preferences.length, 0);
+  assert.equal(await consentLedger.hasCurrentConsent(principal, {
+    permission: "profile:read",
+    purpose: "preference_sync",
+    sharing_scope: "personal",
+  }), true);
+
   console.log(JSON.stringify({
     status: "passed",
     migration_queued_encrypted: true,
@@ -222,14 +258,23 @@ try {
     client_cache_applied_revision: firstFeed.records[0].revision,
     local_service_acknowledged_delete: deleteSync.push.acknowledged === 1,
     client_cache_applied_tombstone: finalFeed.records[0].deleted,
+    sqlite_service_survived_server_restart: restoredPage.changes.some((change) => change.operation === "delete"),
+    sqlite_consent_survived_server_restart: await consentLedger.hasCurrentConsent(principal, {
+      permission: "profile:read",
+      purpose: "preference_sync",
+      sharing_scope: "personal",
+    }),
+    loopback_http_listener_used: server.host === "127.0.0.1",
     profile_http_client_used: true,
     profile_http_adapter_used: true,
-    real_network_or_listener_used: false,
+    external_network_used: false,
   }, null, 2));
 } finally {
+  await server?.close();
   cache?.close();
   outbox?.close();
   service?.close();
+  await consentLedger?.close();
   encryptionKey.fill(0);
   await fs.rm(temporaryDirectory, { recursive: true, force: true });
 }

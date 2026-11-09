@@ -8,16 +8,12 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const skipDemos = process.argv.includes("--skip-demos");
 const node = process.execPath;
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const failures = [];
 let passed = 0;
 
 function run(name, cwd, command, args) {
   console.log(`\n=== ${name} ===`);
-  const onWindowsNpm = process.platform === "win32" && command === npm;
-  const executable = onWindowsNpm ? "cmd.exe" : command;
-  const executableArgs = onWindowsNpm ? ["/d", "/s", "/c", [command, ...args].join(" ")] : args;
-  const result = spawnSync(executable, executableArgs, {
+  const result = spawnSync(command, args, {
     cwd,
     stdio: "inherit",
     shell: false,
@@ -73,17 +69,17 @@ const steps = [
   ["Common contract compatibility tests", repoRoot, node, ["--test", "common-contracts/test/task-compat.test.mjs"]],
   ["Common contract example validation", repoRoot, node, ["common-contracts/validate-examples.mjs"]],
   ["Device manager unit tests", deviceManagerDir, node, ["--test", ...deviceManagerTests]],
-  ["Device manager Mock acceptance", deviceManagerDir, npm, ["run", "acceptance"]],
-  ["Energy Agent unit tests", resolve(repoRoot, "energy-saving"), npm, ["test"]],
-  ["Learning behavior unit tests", resolve(repoRoot, "learning-behavior"), npm, ["test"]],
-  ["Household memory unit tests", resolve(repoRoot, "agent-memory"), npm, ["test"]],
-  ["Multi-Agent orchestrator unit tests", resolve(repoRoot, "multi-agent-orchestrator"), npm, ["test"]],
+  ["Device manager Mock acceptance", deviceManagerDir, node, ["src/acceptance.js"]],
+  ["Energy Agent unit tests", resolve(repoRoot, "energy-saving"), node, ["--test"]],
+  ["Learning behavior unit tests", resolve(repoRoot, "learning-behavior"), node, ["--test"]],
+  ["Household memory unit tests", resolve(repoRoot, "agent-memory"), node, ["--test"]],
+  ["Multi-Agent orchestrator unit tests", resolve(repoRoot, "multi-agent-orchestrator"), node, ["--test"]],
 ];
 
 if (!skipDemos) {
   steps.push(
-    ["Energy Agent Mock demo", resolve(repoRoot, "energy-saving"), npm, ["run", "demo"]],
-    ["Multi-Agent to Mock HA end-to-end demo", resolve(repoRoot, "multi-agent-orchestrator"), npm, ["run", "demo"]],
+    ["Energy Agent Mock demo", resolve(repoRoot, "energy-saving"), node, ["src/demo.js"]],
+    ["Multi-Agent to Mock HA end-to-end demo", resolve(repoRoot, "multi-agent-orchestrator"), node, ["src/demo.js"]],
   );
 }
 

@@ -1,0 +1,71 @@
+{
+  "gateway": {
+    "port": 19910,
+    "bind": "loopback",
+    "auth": { "mode": "none" },
+    "mode": "local"
+  },
+  "models": {
+    "providers": {
+      "dscompat": {
+        "models": [
+          {
+            "id": "deepseek-v4-flash",
+            "input": ["text"],
+            "reasoning": true,
+            "name": "DeepSeek V4 Flash (OpenAI-compatible pilot)",
+            "maxTokens": 64000,
+            "contextWindow": 1000000
+          }
+        ],
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "LT_EXPERIMENT_API_KEY"
+        },
+        "api": "openai-completions",
+        "baseUrl": "https://api.deepseek.com/v1"
+      }
+    }
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "dev",
+        "default": true,
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/profiles/A/workspaces/dev",
+        "tools": { "allow": ["sessions_send"] }
+      },
+      {
+        "id": "device-steward",
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/fixtures/workspaces/device_steward",
+        "tools": { "allow": [] }
+      },
+      {
+        "id": "security-guard",
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/fixtures/workspaces/safety_review",
+        "tools": { "allow": [] }
+      }
+    ],
+    "defaults": {
+      "model": { "primary": "dscompat/deepseek-v4-flash" }
+    }
+  },
+  "secrets": {
+    "providers": {
+      "default": {
+        "allowlist": ["LT_EXPERIMENT_API_KEY"],
+        "source": "env"
+      }
+    }
+  },
+  "tools": {
+    "profile": "minimal",
+    "alsoAllow": ["sessions_send"],
+    "agentToAgent": {
+      "enabled": true,
+      "allow": ["dev", "device-steward", "security-guard"]
+    },
+    "sessions": { "visibility": "all" }
+  }
+}

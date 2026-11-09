@@ -174,6 +174,26 @@ export function createProfileSyncHttpAdapter({ service, consentService, resolveB
     throw new TypeError("Trusted identity resolution and current-consent checks are required.");
   }
 
+  // This in-process prototype linearizes consent changes with every operation
+  // that reads or writes consent-protected profile data. Production storage
+  // must enforce the same rule transactionally across processes and instances.
+  let consentSensitiveQueue = Promise.resolve();
+  function serializeConsentSensitiveOperation(operation) {
+    const result = consentSensitiveQueue.then(operation, operation);
+    consentSensitiveQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  async function requireCurrentConsent(principal, request) {
+    let consentGranted;
+    try {
+      consentGranted = await hasCurrentConsent(principal, request);
+    } catch {
+      throw codedError("CONSENT_SERVICE_UNAVAILABLE");
+    }
+    if (consentGranted !== true) throw codedError("PROFILE_CONSENT_REQUIRED");
+  }
+
   return async function handleProfileSyncRequest(request) {
     let url;
     try {
@@ -212,7 +232,9 @@ export function createProfileSyncHttpAdapter({ service, consentService, resolveB
           throw codedError("CONSENT_SERVICE_UNAVAILABLE");
         }
         const change = await readJsonBodyLimited(request);
-        const result = await consentService.applyChange({ principal, change });
+        const result = await serializeConsentSensitiveOperation(
+          () => consentService.applyChange({ principal, change }),
+        );
         const status = result.status ?? 200;
         const { status: ignoredStatus, ...body } = result;
         return jsonResponse(status, body);
@@ -238,24 +260,20 @@ export function createProfileSyncHttpAdapter({ service, consentService, resolveB
           time_zone: timeZone,
         }).filter(([, value]) => value !== undefined));
         validateCurrentPreferenceScope(memoryType, scope);
-        let consentGranted;
-        try {
-          consentGranted = await hasCurrentConsent(principal, {
+        const result = await serializeConsentSensitiveOperation(async () => {
+          await requireCurrentConsent(principal, {
             permission: "profile:read",
             sharing_scope: sharingScope,
             purpose: "agent_task",
             preference_type: memoryType,
             preference_scope: scope,
           });
-        } catch {
-          throw codedError("CONSENT_SERVICE_UNAVAILABLE");
-        }
-        if (consentGranted !== true) throw codedError("PROFILE_CONSENT_REQUIRED");
-        const result = await service.readCurrentPreferences({
-          principal,
-          sharing_scope: sharingScope,
-          memory_type: memoryType,
-          scope,
+          return service.readCurrentPreferences({
+            principal,
+            sharing_scope: sharingScope,
+            memory_type: memoryType,
+            scope,
+          });
         });
         return jsonResponse(200, result);
       }
@@ -263,20 +281,14 @@ export function createProfileSyncHttpAdapter({ service, consentService, resolveB
       if (request.method === "POST") {
         const change = await readJsonBodyLimited(request);
         const sharingScope = change?.sharing_scope;
-        let consentGranted;
-        try {
-          consentGranted = await hasCurrentConsent(principal, {
+        const result = await serializeConsentSensitiveOperation(async () => {
+          await requireCurrentConsent(principal, {
             permission: "profile:write",
             sharing_scope: sharingScope,
             purpose: "preference_sync",
           });
-        } catch {
-          throw codedError("CONSENT_SERVICE_UNAVAILABLE");
-        }
-        if (consentGranted !== true) {
-          throw codedError("PROFILE_CONSENT_REQUIRED");
-        }
-        const result = await service.applyChange({ principal, change });
+          return service.applyChange({ principal, change });
+        });
         const status = result.status ?? 200;
         const { status: ignoredStatus, ...body } = result;
         return jsonResponse(status, body);
@@ -291,27 +303,21 @@ export function createProfileSyncHttpAdapter({ service, consentService, resolveB
       if (!sharingScope || !["personal", "household"].includes(sharingScope)) {
         throw codedError("INVALID_SHARING_SCOPE");
       }
-      let consentGranted;
-      try {
-        consentGranted = await hasCurrentConsent(principal, {
+      const page = await serializeConsentSensitiveOperation(async () => {
+        await requireCurrentConsent(principal, {
           permission: "profile:read",
           sharing_scope: sharingScope,
           purpose: "preference_sync",
         });
-      } catch {
-        throw codedError("CONSENT_SERVICE_UNAVAILABLE");
-      }
-      if (consentGranted !== true) {
-        throw codedError("PROFILE_CONSENT_REQUIRED");
-      }
-      const cursor = parseNonNegativeInteger(rawCursor, 0, "cursor");
-      const limit = parseNonNegativeInteger(rawLimit, 50, "limit");
-      if (limit < 1 || limit > 100) throw codedError("INVALID_PAGE_SIZE");
-      const page = await service.pull({
-        principal,
-        sharing_scope: sharingScope,
-        cursor,
-        limit,
+        const cursor = parseNonNegativeInteger(rawCursor, 0, "cursor");
+        const limit = parseNonNegativeInteger(rawLimit, 50, "limit");
+        if (limit < 1 || limit > 100) throw codedError("INVALID_PAGE_SIZE");
+        return service.pull({
+          principal,
+          sharing_scope: sharingScope,
+          cursor,
+          limit,
+        });
       });
       return jsonResponse(200, page);
     } catch (error) {

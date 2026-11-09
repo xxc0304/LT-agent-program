@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "openclaw_version": "2026.7.1-2",
+  "shared_model": {
+    "provider_id": "dscompat",
+    "model_id": "deepseek-v4-flash",
+    "api": "openai-completions",
+    "base_url": "https://api.deepseek.com/v1",
+    "secret_reference": "LT_EXPERIMENT_API_KEY",
+    "max_tokens": 64000,
+    "context_window": 1000000
+  },
+  "candidates": {
+    "A": {
+      "profile": "profiles/A",
+      "config_patch": "profiles/A/openclaw-config.patch.json",
+      "method": "teacher_AGENTS_direct_sessions_send",
+      "source_profile": "../orchestration-comparison-v1/profiles/A",
+      "main_tools": ["sessions_send"]
+    },
+    "B": {
+      "profile": "profiles/B",
+      "config_patch": "profiles/B/openclaw-config.patch.json",
+      "method": "structured_plan_validated_and_dispatched_by_platform_plugin",
+      "source_profile": "profiles/B",
+      "main_tools": ["orchestrate_household_agents"]
+    },
+    "C": {
+      "profile": "profiles/C",
+      "config_patch": "profiles/C/openclaw-config.patch.json",
+      "method": "manager_agent_as_tools",
+      "source_profile": "../orchestration-comparison-v1/profiles/C",
+      "main_tools": [
+        "call_device_specialist",
+        "call_safety_review",
+        "call_energy_specialist",
+        "call_learning_specialist"
+      ]
+    },
+    "D": {
+      "profile": "profiles/D",
+      "config_patch": "profiles/D/openclaw-config.patch.json",
+      "method": "B_with_on_demand_minimal_plan_prompt",
+      "source_profile": "profiles/D",
+      "main_tools": ["orchestrate_household_agents"]
+    }
+  },
+  "scope": "Configuration parity only. A/B/C/D model behavior and performance remain unmeasured until controlled runs are completed."
+}

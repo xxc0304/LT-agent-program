@@ -1,0 +1,116 @@
+{
+  "gateway": {
+    "port": 19913,
+    "bind": "loopback",
+    "auth": { "mode": "none" },
+    "mode": "local"
+  },
+  "models": {
+    "providers": {
+      "dscompat": {
+        "models": [
+          {
+            "id": "deepseek-v4-flash",
+            "input": ["text"],
+            "reasoning": true,
+            "name": "DeepSeek V4 Flash (OpenAI-compatible pilot)",
+            "maxTokens": 64000,
+            "contextWindow": 1000000
+          }
+        ],
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "LT_EXPERIMENT_API_KEY"
+        },
+        "api": "openai-completions",
+        "baseUrl": "https://api.deepseek.com/v1"
+      }
+    }
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "dev",
+        "default": true,
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/profiles/C/workspaces/dev",
+        "tools": {
+          "allow": [
+            "call_device_specialist",
+            "call_safety_review",
+            "call_energy_specialist",
+            "call_learning_specialist"
+          ]
+        }
+      },
+      {
+        "id": "device-specialist-tool",
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/fixtures/workspaces/device_steward",
+        "tools": { "allow": [] }
+      },
+      {
+        "id": "safety-review-tool",
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/fixtures/workspaces/safety_review",
+        "tools": { "allow": [] }
+      },
+      {
+        "id": "energy-specialist-tool",
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/fixtures/workspaces/energy_manager",
+        "tools": { "allow": [] }
+      },
+      {
+        "id": "learning-specialist-tool",
+        "workspace": "__REPO_ROOT__/experiments/orchestration-comparison-v1/fixtures/workspaces/learning_companion",
+        "tools": { "allow": [] }
+      }
+    ],
+    "defaults": {
+      "model": { "primary": "dscompat/deepseek-v4-flash" }
+    }
+  },
+  "secrets": {
+    "providers": {
+      "default": {
+        "allowlist": ["LT_EXPERIMENT_API_KEY"],
+        "source": "env"
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "manager-agent-tools": {
+        "enabled": true,
+        "config": {
+          "frontdoorAgentId": "dev",
+          "targets": {
+            "device_steward": "device-specialist-tool",
+            "safety_review": "safety-review-tool",
+            "energy_manager": "energy-specialist-tool",
+            "learning_companion": "learning-specialist-tool"
+          },
+          "timeoutMs": 120000
+        }
+      }
+    }
+  },
+  "tools": {
+    "profile": "minimal",
+    "alsoAllow": [
+      "call_device_specialist",
+      "call_safety_review",
+      "call_energy_specialist",
+      "call_learning_specialist"
+    ],
+    "agentToAgent": {
+      "enabled": true,
+      "allow": [
+        "dev",
+        "device-specialist-tool",
+        "safety-review-tool",
+        "energy-specialist-tool",
+        "learning-specialist-tool"
+      ]
+    },
+    "sessions": { "visibility": "all" }
+  }
+}
