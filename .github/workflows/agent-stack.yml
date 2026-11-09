@@ -48,6 +48,10 @@ jobs:
         working-directory: device-manager
 
       - name: Dry-run all four orchestration profiles with target OpenClaw
+        env:
+          # OpenClaw resolves configured SecretRefs even during config dry-run.
+          # This value is synthetic and is never used for a model request.
+          LT_EXPERIMENT_API_KEY: synthetic-dry-run-only-not-a-credential
         run: |
           PATH="$GITHUB_WORKSPACE/device-manager/node_modules/.bin:$PATH" \
             bash experiments/orchestration-comparison-v2/tools/dry_run_profiles_linux.sh all
