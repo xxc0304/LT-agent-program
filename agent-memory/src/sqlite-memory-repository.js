@@ -1,6 +1,5 @@
 import { createRequire } from "node:module";
-import fs from "node:fs";
-import path from "node:path";
+import { preparePrivateSQLitePath } from "./private-sqlite-path.js";
 
 let DatabaseSync;
 try {
@@ -44,9 +43,8 @@ export class SQLiteMemoryRepository {
       throw new TypeError("schemaVersion must be a non-empty string");
     }
 
-    this.databasePath = path.resolve(databasePath);
+    this.databasePath = preparePrivateSQLitePath(databasePath);
     this.schemaVersion = schemaVersion;
-    fs.mkdirSync(path.dirname(this.databasePath), { recursive: true, mode: 0o700 });
     this.database = new DatabaseSync(this.databasePath);
     try {
       this.database.exec("PRAGMA busy_timeout = 5000;");
@@ -129,8 +127,6 @@ export class SQLiteMemoryRepository {
       this.database.close();
       throw sqliteBusyError(error);
     }
-
-    if (process.platform !== "win32") fs.chmodSync(this.databasePath, 0o600);
   }
 
   #loadDocument() {

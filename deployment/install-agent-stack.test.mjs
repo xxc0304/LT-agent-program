@@ -5,13 +5,68 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { comparablePath, runInstaller } from "./install-agent-stack.mjs";
+import { comparablePath, REQUIRED_OPENCLAW_VERSION, runInstaller } from "./install-agent-stack.mjs";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
+
+function compareOpenClawVersions(left, right) {
+  const parse = (value) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value);
+    assert.ok(match, `Unsupported OpenClaw version format: ${value}`);
+    return {
+      core: match.slice(1, 4).map(Number),
+      prerelease: match[4] ? match[4].split(".") : [],
+    };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < a.core.length; index += 1) {
+    if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index];
+  }
+  if (a.prerelease.length === 0 && b.prerelease.length === 0) return 0;
+  if (a.prerelease.length === 0) return 1;
+  if (b.prerelease.length === 0) return -1;
+  for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+    if (a.prerelease[index] === undefined) return -1;
+    if (b.prerelease[index] === undefined) return 1;
+    if (a.prerelease[index] === b.prerelease[index]) continue;
+    const aNumeric = /^\d+$/.test(a.prerelease[index]);
+    const bNumeric = /^\d+$/.test(b.prerelease[index]);
+    if (aNumeric && bNumeric) return Number(a.prerelease[index]) - Number(b.prerelease[index]);
+    if (aNumeric !== bNumeric) return aNumeric ? -1 : 1;
+    return a.prerelease[index].localeCompare(b.prerelease[index]);
+  }
+  return 0;
+}
 
 test("path identity follows filesystem case rules for Linux and Windows", () => {
   assert.notEqual(comparablePath("/srv/OpenClaw/plugins"), comparablePath("/srv/openclaw/plugins"));
   assert.equal(comparablePath("C:\\OpenClaw\\plugins"), comparablePath("c:/openclaw/PLUGINS/"));
+});
+
+test("OpenClaw compatibility target stays aligned across installers, plugins, and Ubuntu CI", async () => {
+  const compatibility = JSON.parse(await readFile(join(packageRoot, "deployment/openclaw-compatibility.json"), "utf8"));
+  assert.equal(REQUIRED_OPENCLAW_VERSION, compatibility.requiredVersion);
+
+  for (const packagePath of ["device-manager/package.json", "multi-agent-orchestrator/package.json"]) {
+    const packageJson = JSON.parse(await readFile(join(packageRoot, packagePath), "utf8"));
+    assert.equal(packageJson.openclaw.build.openclawVersion, compatibility.requiredVersion, `${packagePath} OpenClaw build target`);
+    assert.equal(packageJson.openclaw.build.pluginSdkVersion, compatibility.requiredVersion, `${packagePath} SDK target`);
+    assert.equal(packageJson.peerDependencies.openclaw, packageJson.openclaw.compat.pluginApi, `${packagePath} plugin API range`);
+    const minimumMatch = /^>=\s*(.+)$/.exec(packageJson.openclaw.compat.minGatewayVersion);
+    assert.ok(minimumMatch, `${packagePath} must declare an explicit minimum Gateway version`);
+    assert.ok(
+      compareOpenClawVersions(compatibility.requiredVersion, minimumMatch[1]) >= 0,
+      `${packagePath} minimum Gateway version exceeds the installer target`,
+    );
+  }
+
+  const powershellInstaller = await readFile(join(packageRoot, "deployment/Install-Agent-Stack.ps1"), "utf8");
+  assert.match(powershellInstaller, /Join-Path\s+\$PSScriptRoot\s+'openclaw-compatibility\.json'/i);
+  assert.doesNotMatch(powershellInstaller, /\$requiredOpenClawVersion\s*=\s*['"]\d/);
+
+  const workflow = await readFile(join(packageRoot, ".github/workflows/agent-stack.yml"), "utf8");
+  assert.ok(workflow.includes(`openclaw@${compatibility.requiredVersion}`));
 });
 
 async function withProfile(run) {
@@ -22,7 +77,7 @@ async function withProfile(run) {
   finally { await rm(dir, { recursive: true, force: true }); }
 }
 
-function fakeOpenClaw(configPath, log = []) {
+function fakeOpenClaw(configPath, log = [], { autoUpdateEnabled } = {}) {
   return (command, args, options = {}) => {
     log.push({ command, args, cwd: options.cwd });
     if (command === "npm" && args.join(" ") === "--version") return { status: 0, stdout: "10.8.2\n" };
@@ -31,12 +86,17 @@ function fakeOpenClaw(configPath, log = []) {
     if (args.join(" ") === "config validate") return { status: 0, stdout: "valid\n" };
     if (args.join(" ") === "agents list --json") return { status: 0, stdout: JSON.stringify([{ id: "main", isDefault: true }]) };
     if (args.join(" ") === "plugins list --verbose --json") return { status: 0, stdout: "[]" };
+    if (args.join(" ") === "config get --json update.auto.enabled") {
+      return autoUpdateEnabled === undefined
+        ? { status: 1, stdout: "", stderr: "Config path not found: update.auto.enabled. Run openclaw config validate to inspect config shape." }
+        : { status: 0, stdout: JSON.stringify(autoUpdateEnabled) };
+    }
     if (args[0] === "config" && args[1] === "get") return { status: 1, stdout: "" };
     return { status: 1, stdout: "", stderr: "unexpected mock command" };
   };
 }
 
-function fakeApplyRunner(configPath, log = [], { failOn } = {}) {
+function fakeApplyRunner(configPath, log = [], { failOn, autoUpdateEnabled } = {}) {
   const projectAgents = [
     { id: "main", tools: {} },
     { id: "device-manager", tools: {} },
@@ -53,6 +113,11 @@ function fakeApplyRunner(configPath, log = [], { failOn } = {}) {
     if (joined === "config validate") return { status: 0, stdout: "valid\n" };
     if (joined === "agents list --json") return { status: 0, stdout: JSON.stringify([{ id: "main", isDefault: true }]) };
     if (joined === "plugins list --verbose --json") return { status: 0, stdout: "[]" };
+    if (joined === "config get --json update.auto.enabled") {
+      return autoUpdateEnabled === undefined
+        ? { status: 1, stdout: "", stderr: "Config path not found: update.auto.enabled. Run openclaw config validate to inspect config shape." }
+        : { status: 0, stdout: JSON.stringify(autoUpdateEnabled) };
+    }
     if (args[0] === "config" && args[1] === "get") {
       const setting = args[3];
       if (setting === "agents.list") {
@@ -83,6 +148,7 @@ test("default run is read-only and writes a JSON plan artifact when requested", 
 
     assert.equal(plan.mode, "plan-only");
     assert.equal(plan.npmVersion, "10.8.2");
+    assert.deepEqual(plan.openclawAutomaticUpdates, { enabled: false, source: "default-off" });
     assert.equal(plan.frontdoorAgentId, "main");
     assert.equal(plan.safety.profileMutations, false);
     assert.equal(plan.safety.packageInstallation, false);
@@ -93,6 +159,42 @@ test("default run is read-only and writes a JSON plan artifact when requested", 
     assert.ok(calls.every(({ args }) => !(args[0] === "config" && args[1] === "set")));
     assert.deepEqual(plan.createAgents, ["device-manager", "energy-saving", "learning-companion"]);
     assert.equal(plan.mainChatOrchestrationTool, "orchestrate_household_agents");
+  });
+});
+
+test("automatic OpenClaw updates block stack apply before package or profile mutations", async () => {
+  await withProfile(async ({ dir, configPath }) => {
+    const calls = [];
+    let confirmationAsked = false;
+    await assert.rejects(runInstaller({
+      repoRoot: packageRoot,
+      commandRunner: fakeApplyRunner(configPath, calls, { autoUpdateEnabled: true }),
+      apply: true,
+      confirmInstall: async () => { confirmationAsked = true; return "INSTALL"; },
+    }), /OpenClaw automatic updates are enabled/);
+
+    assert.equal(confirmationAsked, false);
+    assert.deepEqual(await readdir(dir), ["openclaw.json"]);
+    assert.ok(calls.every(({ command, args }) => !(command === "npm" && args.includes("install"))));
+    assert.ok(calls.every(({ args }) => !(args[0] === "config" && args[1] === "set")));
+    assert.ok(calls.every(({ args }) => args[0] !== "plugins" || args[1] !== "install"));
+    assert.ok(calls.every(({ args }) => args[0] !== "agents" || args[1] !== "add"));
+  });
+});
+
+test("automatic update status read failures stop planning instead of assuming the default", async () => {
+  await withProfile(async ({ configPath }) => {
+    const calls = [];
+    const base = fakeOpenClaw(configPath, calls);
+    const runner = (command, args, options) => {
+      if (args.join(" ") === "config get --json update.auto.enabled") {
+        calls.push({ command, args });
+        return { status: 1, stdout: "", stderr: "could not start OpenClaw CLI" };
+      }
+      return base(command, args, options);
+    };
+    await assert.rejects(runInstaller({ repoRoot: packageRoot, commandRunner: runner }), /Could not reliably read OpenClaw setting/);
+    assert.ok(calls.every(({ args }) => !(args[0] === "config" && args[1] === "set")));
   });
 });
 
@@ -223,6 +325,13 @@ test("confirmed apply backs up first, dry-runs every config write, then applies 
     const dirEntries = await readdir(dir);
     const backupName = dirEntries.find((name) => name.endsWith(".bak"));
     assert.equal(plan.mode, "applied");
+    const linkedPluginInstalls = calls.filter(({ args }) => args[0] === "plugins" && args[1] === "install");
+    assert.equal(linkedPluginInstalls.length, 2);
+    assert.ok(linkedPluginInstalls.every(({ args }) => args[2] === "--link"));
+    assert.deepEqual(linkedPluginInstalls.map(({ args }) => args[3]), [
+      join(packageRoot, "device-manager"),
+      join(packageRoot, "multi-agent-orchestrator"),
+    ]);
     assert.ok(backupName);
     assert.deepEqual(await readFile(join(dir, backupName), "utf8"), "{}\n");
     assert.equal(plan.backupPath, join(dir, backupName));

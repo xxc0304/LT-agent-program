@@ -87,7 +87,7 @@ Mock 设备写入只允许更新隔离的内存/文件状态机，不调用 HA�
 
 ### 阶段 0：本地协议与代码检查
 
-在不调用模型的情况下，检查 Mock 状态初始化/重置、设备状态查询、模拟动作后回读、冲突和敏感动作拦截、故障注入、日志字段与报告生成。该阶段只能证明本地代码路径具备这些行为，不能证明 LLM 会理解自然语言或选对 Agent。
+在不调用模型的情况下，检查 Mock 状态初始化/重置、设备状态查询、模拟动作后回读、预置拒绝策略和敏感动作授权边界、故障注入、日志字段与报告生成。`mock-household-harness.mjs` 执行六个确定性 fixture；`candidate-matrix.json` 与静态契约测试检查 A/B/C/D 的入口工具边界及共享模型 endpoint、ID、限制和密钥引用；Linux 脚本 `bash experiments/orchestration-comparison-v2/tools/dry_run_profiles_linux.sh all` 则用固定 OpenClaw CLI dry-run 四个配置片段。上述步骤不启动 Gateway 或调用模型。该阶段只能证明本地 Mock 和配置契约具备这些行为，不能证明 LLM 会理解自然语言或选对 Agent，也不计入候选效果样本。
 
 ### 阶段 1：服务健康和小样本筛选
 
@@ -110,5 +110,5 @@ Mock 设备写入只允许更新隔离的内存/文件状态机，不调用 HA�
 - 当前 B/D Windows pilot 没有有效配对样本；DeepSeek 503 后停止调用。
 - 当前 v1 A/B/C 每场景只有一条旧轨迹，且汇总口径、轮次引用不一致；不能作为选择证据。
 - 现有 `npm test` 与 Mock 演示是编排器代码/安全边界检查，Agent 输出由固定 stub 控制，不代表大模型的语义正确率。
-- B/D 配置只覆盖 B 与 D，不能替代 A/B/C/D 同场对照。S01 还需接入共享 Mock 查询数据，才能测试真正的“实时状态查询”。
+- v2 已补齐 A/B/C/D 配置矩阵并静态校验共享模型 endpoint 与主工具边界；A/C 复用 v1 已审阅的入口提示和专家 fixture。四个配置仍需在固定 OpenClaw Linux CLI 下完成 dry-run，并在隔离 Gateway 验证插件加载与工具可见性。S01 的离线 fixture 已接入共享 Mock 状态查询，但仍需在真实编排工具轨迹中验证模型是否会主动查询，而不是凭对话猜测。
 - Docker daemon 当前不可用；Windows 采样不代表 Linux 边缘网关性能。

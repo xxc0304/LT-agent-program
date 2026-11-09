@@ -54,22 +54,35 @@ async function replaceWithCopyFallback(temporaryPath, targetPath, backupPath) {
   }
 }
 
+function defaultUserDataDirectory(env) {
+  if (process.platform === "win32") {
+    const localAppData = env.LOCALAPPDATA;
+    return path.isAbsolute(localAppData ?? "")
+      ? localAppData
+      : path.join(os.homedir(), "AppData", "Local");
+  }
+  const xdgDataHome = env.XDG_DATA_HOME;
+  return path.isAbsolute(xdgDataHome ?? "")
+    ? xdgDataHome
+    : path.join(os.homedir(), ".local", "share");
+}
 export function defaultMemoryPath(env = process.env) {
   if (env.FAMILY_MEMORY_PATH) return path.resolve(env.FAMILY_MEMORY_PATH);
-  const base = env.LOCALAPPDATA
-    ?? env.XDG_DATA_HOME
-    ?? path.join(os.homedir(), ".local", "share");
+  const base = defaultUserDataDirectory(env);
   return path.join(base, "LT-agent-program", "family-memory-v0.1.json");
 }
 
 export function defaultMemoryDatabasePath(env = process.env) {
-  if (env.FAMILY_MEMORY_DB_PATH) return path.resolve(env.FAMILY_MEMORY_DB_PATH);
-  if (env.OPENCLAW_STATE_DIR) {
+  if (env.FAMILY_MEMORY_DB_PATH) {
+    if (!path.isAbsolute(env.FAMILY_MEMORY_DB_PATH)) {
+      throw new TypeError("FAMILY_MEMORY_DB_PATH must be an absolute path.");
+    }
+    return path.resolve(env.FAMILY_MEMORY_DB_PATH);
+  }
+  if (path.isAbsolute(env.OPENCLAW_STATE_DIR ?? "")) {
     return path.join(path.resolve(env.OPENCLAW_STATE_DIR), "device-manager", "family-memory.sqlite");
   }
-  const base = env.LOCALAPPDATA
-    ?? env.XDG_DATA_HOME
-    ?? path.join(os.homedir(), ".local", "share");
+  const base = defaultUserDataDirectory(env);
   return path.join(base, "LT-agent-program", "device-manager", "family-memory.sqlite");
 }
 

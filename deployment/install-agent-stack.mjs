@@ -2,18 +2,25 @@
 
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import { access, copyFile, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const REQUIRED_OPENCLAW_VERSION = "2026.7.1-2";
+const deploymentDirectory = dirname(fileURLToPath(import.meta.url));
+const openClawCompatibility = JSON.parse(readFileSync(join(deploymentDirectory, "openclaw-compatibility.json"), "utf8"));
+if (typeof openClawCompatibility.requiredVersion !== "string"
+  || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(openClawCompatibility.requiredVersion)) {
+  throw new Error("deployment/openclaw-compatibility.json must declare a valid requiredVersion.");
+}
+
+export const REQUIRED_OPENCLAW_VERSION = openClawCompatibility.requiredVersion;
 export const PROJECT_AGENT_IDS = ["device-manager", "energy-saving", "learning-companion"];
 export const RESTRICTED_SESSION_TOOLS = ["sessions_list", "sessions_history", "sessions_send", "sessions_spawn"];
 const ENERGY_AGENT_ONLY_TOOLS = ["analyze_energy_usage", "forecast_energy_budget", "evaluate_energy_effect", "calculate_energy_optimization"];
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(deploymentDirectory, "..");
 
 function parseArgs(argv) {
   const options = {
@@ -182,6 +189,25 @@ function makeConfigReader(commandRunner, openclawPath) {
   };
 }
 
+function readAutoUpdateEnabled(commandRunner, openclawPath) {
+  const result = commandRunner(openclawPath, ["config", "get", "--json", "update.auto.enabled"]);
+  const output = `${String(result?.stdout ?? "")}\n${String(result?.stderr ?? "")}`
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
+  if (result?.status === 0) {
+    let enabled;
+    try { enabled = JSON.parse(String(result.stdout).trim()); }
+    catch { throw new Error("Could not parse OpenClaw setting 'update.auto.enabled'; no profile changes were made."); }
+    if (typeof enabled !== "boolean") {
+      throw new Error("OpenClaw setting 'update.auto.enabled' is not a boolean; no profile changes were made.");
+    }
+    return { enabled, source: "explicit-config" };
+  }
+  if (/Config path not found:\s*update\.auto\.enabled(?:\.|\s|$)/i.test(output)) {
+    return { enabled: false, source: "default-off" };
+  }
+  throw new Error("Could not reliably read OpenClaw setting 'update.auto.enabled'; no profile changes were made.");
+}
+
 function getPluginRows(commandRunner, openclawPath) {
   return getRows(parseJsonOutput(
     runChecked(commandRunner, openclawPath, ["plugins", "list", "--verbose", "--json"], "Checking installed OpenClaw plugins"),
@@ -328,6 +354,11 @@ export async function runInstaller(options = {}) {
   }
 
   const getConfig = makeConfigReader(commandRunner, openclawPath);
+  const autoUpdateSetting = readAutoUpdateEnabled(commandRunner, openclawPath);
+  const openclawAutoUpdateEnabled = autoUpdateSetting.enabled;
+  if (apply && openclawAutoUpdateEnabled) {
+    throw new Error("OpenClaw automatic updates are enabled. Disable them through the OpenClaw operator configuration and rerun during a separate maintenance window. The installer will not change this setting or install the Agent stack.");
+  }
   const currentPluginAllowValue = getConfig("plugins.allow", true);
   const hasExplicitPluginAllow = currentPluginAllowValue !== undefined && currentPluginAllowValue !== null;
   const currentPluginAllow = stringArray(currentPluginAllowValue, "plugins.allow");
@@ -413,6 +444,10 @@ export async function runInstaller(options = {}) {
     mode: apply ? "apply-pending-confirmation" : "plan-only",
     npmVersion,
     openclawVersion,
+    openclawAutomaticUpdates: {
+      enabled: openclawAutoUpdateEnabled,
+      source: autoUpdateSetting.source,
+    },
     activeProfileConfig: configPath,
     frontdoorAgentId: frontdoorId,
     projectAgentIds: PROJECT_AGENT_IDS,

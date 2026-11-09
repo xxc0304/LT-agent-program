@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { normalizeMemoryDocument } from "./memory-store.js";
+import { preparePrivateSQLitePath } from "./private-sqlite-path.js";
 import {
   SQLITE_MEMORY_APPLICATION_ID,
   SQLITE_MEMORY_SCHEMA_VERSION,
@@ -120,12 +121,12 @@ function openReadOnlyDatabase(databasePath, invalidCode) {
 }
 
 async function withNewSQLiteTarget(destinationPath, operation, createContents) {
-  await fs.mkdir(path.dirname(destinationPath), { recursive: true });
   const temporaryPath = path.join(
     path.dirname(destinationPath),
     `.${path.basename(destinationPath)}.${randomUUID()}.tmp.sqlite`,
   );
   try {
+    preparePrivateSQLitePath(temporaryPath);
     await createContents(temporaryPath);
     if (process.platform !== "win32") await fs.chmod(temporaryPath, 0o600);
     await assertNewDestination(destinationPath, operation);

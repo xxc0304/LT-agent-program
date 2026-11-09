@@ -2,6 +2,14 @@
 
 These instructions apply to the whole `LT-agent-program` repository.
 
+## Linux-first development baseline
+
+- Treat Linux as the primary development and deployment target for project code. Use Ubuntu 24.04 with Node.js 24 as the repository's canonical CI/runtime baseline unless the user or a newer repository decision explicitly changes it.
+- New and changed code must work on Linux: use portable paths/process handling, respect Linux file permissions and case sensitivity, and do not rely on PowerShell, Windows registry/DPAPI, drive-letter paths, or Windows-only filesystem behavior in shared code.
+- Windows may be used as a secondary editing or compatibility environment, but Windows-only test results do not count as Linux validation. Report Linux behavior as unverified until the Ubuntu workflow or a Linux environment actually runs it.
+- If Linux/Docker/WSL is unavailable, continue with portable implementation and static review, while recording the Linux verification still pending. Do not silently switch the project's target baseline to Windows.
+- Keep platform-specific implementations behind explicit adapters (for example, Linux Secret Service vs Windows DPAPI) and select them by runtime platform rather than sharing platform assumptions.
+
 ## Purpose and triggers
 
 When the user asks to "同步", "上传到另一台电脑", "换电脑继续", "接力", "恢复会话", or otherwise asks to transfer this project's Codex work between devices, perform the appropriate CtxHop workflow directly. Do not merely print a tutorial unless the user explicitly asks for instructions.

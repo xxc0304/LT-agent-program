@@ -1,0 +1,391 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "LT Agent Profile Sync API",
+    "version": "0.1.0",
+    "description": "Local draft contract only. No server, identity provider, consent service, or cloud synchronization endpoint is currently deployed."
+  },
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/v1/preferences/current": {
+      "get": {
+        "operationId": "readCurrentPreferencesForAgentTask",
+        "summary": "Read one explicitly authorized preference category",
+        "description": "Task-scoped read endpoint. The caller must name exactly one supported memory_type; the service checks current consent for that category, sharing scope, and any supplied preference-scope filters before returning matching live preferences. It returns no unrelated preference categories, local subject IDs, evidence, or deleted values. This endpoint is not a replacement for the changes feed used by explicit device synchronization.",
+        "parameters": [
+          {
+            "name": "sharing_scope",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["personal", "household"] }
+          },
+          {
+            "name": "memory_type",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["comfort_temperature_c", "comfort_brightness_pct", "sleep_time", "wake_time"] },
+            "description": "Required category selector; its current consent must be checked for this task read."
+          },
+          {
+            "name": "room_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "pattern": "^[a-z0-9_-]{1,40}$" }
+          },
+          {
+            "name": "day_type",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["weekday", "weekend"] }
+          },
+          {
+            "name": "time_zone",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "maxLength": 80 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching current preferences for exactly one authorized category.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CurrentPreferences" } } }
+          },
+          "400": {
+            "description": "Missing/unsupported category, scope, or filter.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "401": {
+            "description": "Bearer token missing, invalid, expired, or unable to resolve an active principal.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "403": {
+            "description": "Principal lacks current consent for this memory_type and sharing_scope.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "413": {
+            "description": "The matching category exceeds the local response limit; narrow the scope filter.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "405": {
+            "description": "Method is not supported for this path.",
+            "headers": { "Allow": { "schema": { "type": "string", "example": "GET" } } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "503": {
+            "description": "Identity, consent, or Profile storage dependency is unavailable.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          }
+        }
+      }
+    },
+    "/v1/preferences/changes": {
+      "post": {
+        "operationId": "applyPreferenceChange",
+        "summary": "Apply one user-confirmed preference change",
+        "description": "The service must resolve the profile and household owner from the verified bearer principal, check current consent and sharing-scope authorization, and ignore any identity supplied in request data. Reuse the same change_id and exact body for retries. A revision conflict requires a new user-confirmed change_id after reconciliation.",
+        "requestBody": {
+          "required": true,
+          "description": "Maximum request body size is 16 KiB.",
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "../schemas/user-preference-change.schema.json" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Change applied, or the exact idempotent request was replayed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChangeApplied" } } }
+          },
+          "400": {
+            "description": "Malformed or unsupported change envelope/preference.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "401": {
+            "description": "Bearer token missing, invalid, expired, or unable to resolve an active principal.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "403": {
+            "description": "Principal lacks current consent, permission, household membership, or write role for the requested scope.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "404": {
+            "description": "Delete requested for a preference that does not exist or is already deleted.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "409": {
+            "description": "Idempotency key reuse, revision conflict, duplicate natural preference, or immutable preference identity conflict.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChangeConflict" } } }
+          },
+          "413": {
+            "description": "Request body exceeds the service limit.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "415": {
+            "description": "Request body must use application/json.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "503": {
+            "description": "Identity, consent, or profile storage dependency is unavailable; clients should retry with the same change_id and body.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          }
+        }
+      },
+      "get": {
+        "operationId": "pullPreferenceChanges",
+        "summary": "Pull current-state deltas for one authorized sharing scope",
+        "description": "The cursor is scoped to the authenticated principal and sharing_scope. The feed is for state synchronization, not audit history: a newer state or tombstone can supersede an earlier event for the same preference. Clients must persist next_cursor only after applying the returned page. Deleted values are not returned; deletes are represented by tombstones.",
+        "parameters": [
+          {
+            "name": "sharing_scope",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "enum": ["personal", "household"] },
+            "description": "Explicit scope; the service must authorize it against the verified principal."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 0, "default": 0 },
+            "description": "Last successfully applied cursor for this principal and scope."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of authorized preference state changes and/or tombstones.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SyncPage" } } }
+          },
+          "400": {
+            "description": "Invalid cursor or page size.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "401": {
+            "description": "Bearer token missing, invalid, expired, or unable to resolve an active principal.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "403": {
+            "description": "Principal lacks current consent or read permission for the requested sharing scope.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "405": {
+            "description": "Method is not supported for this path.",
+            "headers": { "Allow": { "schema": { "type": "string", "example": "GET, POST" } } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "503": {
+            "description": "Identity, consent, or profile storage dependency is unavailable.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          }
+        }
+      }
+    },
+    "/v1/preferences/consents": {
+      "post": {
+        "operationId": "changeProfileConsent",
+        "summary": "Grant or revoke Profile access for an explicit purpose",
+        "description": "The service derives the owner from the verified bearer principal. A preference_sync grant covers the selected personal or household sync scope; an agent_task grant must name exactly one preference category and is read-only. Household membership/role is checked server-side. Revoke increments the consent revision and blocks subsequent requests; clients must also stop queued writes and clear the affected local cache after local revocation. Reuse the same change_id and exact body for retries.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "../schemas/profile-consent-change.schema.json" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Consent state changed, or the exact idempotent request was replayed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConsentChangeApplied" } } }
+          },
+          "400": {
+            "description": "Malformed consent request or unsupported purpose/permission combination.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "401": {
+            "description": "Bearer token missing, invalid, expired, or unable to resolve an active principal.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "403": {
+            "description": "Principal cannot manage consent for this profile or household scope.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "404": {
+            "description": "A revoke was requested for a consent record that does not exist.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          },
+          "409": {
+            "description": "Idempotency key was reused with a different body, or expected_revision is stale.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConsentConflict" } } }
+          },
+          "503": {
+            "description": "Identity, consent, or Profile storage dependency is unavailable.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApiError" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Placeholder for the identity provider selected by the service owner. The API must validate issuer, audience, expiry, and authorization/consent state."
+      }
+    },
+    "schemas": {
+      "CurrentPreference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["preference_id", "revision", "preference", "changed_at"],
+        "properties": {
+          "preference_id": { "type": "string", "format": "uuid" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "preference": { "$ref": "#/components/schemas/Preference" },
+          "changed_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CurrentPreferences": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["preferences"],
+        "properties": {
+          "preferences": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "$ref": "#/components/schemas/CurrentPreference" }
+          }
+        }
+      },
+      "Preference": {
+        "oneOf": [
+          { "$ref": "../schemas/user-preference-change.schema.json#/$defs/comfortTemperature" },
+          { "$ref": "../schemas/user-preference-change.schema.json#/$defs/routineTime" }
+        ]
+      },
+      "ChangeApplied": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["applied", "preference_id", "revision", "cursor"],
+        "properties": {
+          "applied": { "const": true },
+          "preference_id": { "type": "string", "format": "uuid" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "cursor": { "type": "integer", "minimum": 1 },
+          "duplicate": { "type": "boolean", "default": false }
+        }
+      },
+      "ConsentChangeApplied": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["applied", "active", "revision"],
+        "properties": {
+          "applied": { "const": true },
+          "active": { "type": "boolean" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "duplicate": { "type": "boolean", "default": false }
+        }
+      },
+      "ConsentConflict": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["applied", "code"],
+        "properties": {
+          "applied": { "const": false },
+          "code": { "enum": ["IDEMPOTENCY_KEY_REUSED", "REVISION_CONFLICT"] },
+          "current_revision": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "UpsertChangeEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cursor", "preference_id", "operation", "revision", "preference", "changed_at"],
+        "properties": {
+          "cursor": { "type": "integer", "minimum": 1 },
+          "preference_id": { "type": "string", "format": "uuid" },
+          "operation": { "const": "upsert" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "preference": { "$ref": "#/components/schemas/Preference" },
+          "changed_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DeleteChangeEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cursor", "preference_id", "operation", "revision", "changed_at"],
+        "properties": {
+          "cursor": { "type": "integer", "minimum": 1 },
+          "preference_id": { "type": "string", "format": "uuid" },
+          "operation": { "const": "delete" },
+          "revision": { "type": "integer", "minimum": 1 },
+          "changed_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SyncPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["changes", "next_cursor", "has_more"],
+        "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                { "$ref": "#/components/schemas/UpsertChangeEvent" },
+                { "$ref": "#/components/schemas/DeleteChangeEvent" }
+              ]
+            }
+          },
+          "next_cursor": { "type": "integer", "minimum": 0 },
+          "has_more": { "type": "boolean" }
+        }
+      },
+      "ApiError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "INVALID_CHANGE", "INVALID_PREFERENCE", "UNSUPPORTED_MEMORY_TYPE", "INVALID_PREFERENCE_SCOPE",
+              "INVALID_PREFERENCE_TYPE", "PREFERENCE_RESULT_LIMIT_EXCEEDED",
+              "INVALID_ROOM_ID", "INVALID_TEMPERATURE", "INVALID_LOCAL_TIME", "INVALID_DAY_TYPE",
+              "TIME_ZONE_REQUIRED", "INVALID_TIME_ZONE", "INVALID_SYNC_CURSOR", "INVALID_SHARING_SCOPE",
+              "INVALID_PAGE_SIZE", "UNSUPPORTED_QUERY_PARAMETER", "INVALID_JSON", "UNSUPPORTED_MEDIA_TYPE",
+              "REQUEST_TOO_LARGE", "AUTHENTICATION_REQUIRED", "AUTHENTICATION_FAILED", "PROFILE_ACCESS_DENIED",
+              "PROFILE_SCOPE_DENIED", "HOUSEHOLD_ACCESS_DENIED", "PROFILE_CONSENT_REQUIRED",
+              "INVALID_CONSENT_CHANGE", "INVALID_CONSENT_PURPOSE", "CONSENT_NOT_FOUND",
+              "IDENTITY_PROVIDER_UNAVAILABLE", "CONSENT_SERVICE_UNAVAILABLE", "PROFILE_SERVICE_UNAVAILABLE",
+              "METHOD_NOT_ALLOWED", "PREFERENCE_NOT_FOUND"
+            ]
+          },
+          "message": { "type": "string" }
+        }
+      },
+      "ChangeConflict": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["applied", "code"],
+        "properties": {
+          "applied": { "const": false },
+          "code": {
+            "type": "string",
+            "enum": ["IDEMPOTENCY_KEY_REUSED", "REVISION_CONFLICT", "PREFERENCE_EXISTS", "PREFERENCE_IDENTITY_IMMUTABLE"]
+          },
+          "current_revision": { "type": "integer", "minimum": 0 },
+          "current_preference": { "$ref": "#/components/schemas/Preference" },
+          "deleted": { "type": "boolean" },
+          "preference_id": { "type": "string", "format": "uuid" }
+        }
+      }
+    }
+  }
+}
